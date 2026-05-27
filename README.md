@@ -251,7 +251,19 @@ streamlit_app.py
 DASHSCOPE_API_KEY = "你的真实 Key"
 ```
 
-7. 点击 Deploy，等待依赖安装完成后打开页面。
+7. 如需限制为公司内部少数人使用，可在 Secrets 中增加访问密码：
+
+```toml
+APP_PASSWORD = "你的公司内部访问密码"
+```
+
+也可以配置多个访问密码：
+
+```toml
+APP_PASSWORDS = ["成员A的密码", "成员B的密码"]
+```
+
+8. 点击 Deploy，等待依赖安装完成后打开页面。
 
 部署前检查：
 
@@ -260,11 +272,18 @@ DASHSCOPE_API_KEY = "你的真实 Key"
 - 不要提交 `.env`、`.streamlit/secrets.toml`、`.venv/`、`outputs/` 等本地文件；这些已写入 `.gitignore`。
 - `config/settings.yaml` 只保存 provider、endpoint、model 和环境变量名，不保存真实 API Key。
 - `DASHSCOPE_API_KEY` 会优先从环境变量读取；没有环境变量时，会尝试读取 Streamlit Cloud Secrets。
+- `APP_PASSWORD` / `APP_PASSWORDS` 只从环境变量或 Streamlit Cloud Secrets 读取，不写入代码仓库；未配置时页面保持公开访问，配置后会先显示访问密码页。
 
 Streamlit Cloud Secrets 中如需启用 Qwen/DashScope 润色链路，配置：
 
 ```toml
 DASHSCOPE_API_KEY = "你的key"
+```
+
+如需公司内部访问门禁，继续增加：
+
+```toml
+APP_PASSWORD = "你的公司内部访问密码"
 ```
 
 当前配置使用 `llm.provider=domestic`、`api_key_env=DASHSCOPE_API_KEY`、`model=qwen-plus`。页面默认可选择“本地生成 + 大模型润色”；如果没有配置 `DASHSCOPE_API_KEY`，会自动回退到本地稳定生成 `local_only`。也可以在页面中手动选择“本地稳定生成”。

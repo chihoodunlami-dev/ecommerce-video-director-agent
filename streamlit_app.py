@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hmac
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -61,6 +63,7 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
     inject_styles()
+    require_app_access()
 
     if "markdown_result" not in st.session_state:
         st.session_state.markdown_result = ""
@@ -93,6 +96,58 @@ def main() -> None:
                 add_history_record(product.normalized(), result, markdown, markdown_path)
 
         render_output_panel()
+
+
+def require_app_access() -> None:
+    passwords = get_configured_passwords()
+    if not passwords:
+        return
+    if st.session_state.get("app_access_granted"):
+        return
+
+    st.markdown(
+        """
+        <div class="auth-panel">
+            <div class="auth-title">电商短视频编导 Agent</div>
+            <div class="auth-text">请输入公司内部访问密码。</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    password = st.text_input("访问密码", type="password", key="app_access_password")
+    if st.button("进入工具", use_container_width=True):
+        if any(hmac.compare_digest(password, item) for item in passwords):
+            st.session_state.app_access_granted = True
+            st.rerun()
+        else:
+            st.error("访问密码不正确。")
+    st.stop()
+
+
+def get_configured_passwords() -> list[str]:
+    raw_passwords = get_secret_value("APP_PASSWORDS")
+    single_password = get_secret_value("APP_PASSWORD")
+
+    passwords: list[str] = []
+    if isinstance(raw_passwords, str):
+        passwords.extend(item.strip() for item in raw_passwords.split(",") if item.strip())
+    elif isinstance(raw_passwords, (list, tuple)):
+        passwords.extend(str(item).strip() for item in raw_passwords if str(item).strip())
+
+    if single_password:
+        passwords.append(str(single_password).strip())
+
+    return [item for item in passwords if item]
+
+
+def get_secret_value(name: str) -> Any:
+    env_value = os.getenv(name)
+    if env_value:
+        return env_value
+    try:
+        return st.secrets.get(name)
+    except Exception:
+        return None
 
 
 def render_input_form() -> Optional[ProductInfo]:
@@ -911,6 +966,26 @@ def inject_styles() -> None:
         }
         .empty-output-text {
             color: #d6deea;
+            line-height: 1.7;
+        }
+        .auth-panel {
+            max-width: 460px;
+            margin: 12vh auto 1.2rem;
+            padding: 1.4rem;
+            border: 1px solid rgba(245, 199, 107, 0.36);
+            border-radius: 12px;
+            background: rgba(18, 25, 35, 0.94);
+            box-shadow: 0 20px 48px rgba(0, 0, 0, 0.26);
+        }
+        .auth-title {
+            color: #f8fafc;
+            font-size: 1.35rem;
+            font-weight: 900;
+            margin-bottom: 0.55rem;
+        }
+        .auth-text {
+            color: #aab6c5;
+            font-size: 0.95rem;
             line-height: 1.7;
         }
         </style>
