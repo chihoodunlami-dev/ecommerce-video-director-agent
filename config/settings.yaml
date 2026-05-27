@@ -1,0 +1,26 @@
+{
+  "project": {
+    "name": "ecommerce-video-director-agent",
+    "default_platform": "抖音",
+    "default_duration": 30,
+    "output_dir": "outputs",
+    "save_json_result": true
+  },
+  "script_modes": ["live_action", "ai_video"],
+  "llm": {
+  "provider": "domestic",
+  "timeout_seconds": 90,
+  "max_retries": 2,
+  "polish_max_retries": 0,
+  "openai": {
+    "api_key_env": "OPENAI_API_KEY",
+    "base_url": "https://api.openai.com/v1/responses",
+    "model": "gpt-4.1-mini"
+  },
+  "domestic": {
+    "api_key_env": "DASHSCOPE_API_KEY",
+    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "model": "qwen-plus"
+  }
+}
+}

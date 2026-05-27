@@ -1,0 +1,119 @@
+{
+  "risk_terms": [
+    {
+      "term": "最强",
+      "reason": "绝对化用语，容易触发广告合规风险。",
+      "replacement": "表现出色"
+    },
+    {
+      "term": "第一",
+      "reason": "排名类表述需要充分证明材料。",
+      "replacement": "受欢迎"
+    },
+    {
+      "term": "根治",
+      "reason": "医疗化功效承诺，普通商品不应使用。",
+      "replacement": "改善使用体验"
+    },
+    {
+      "term": "永久",
+      "reason": "永久性承诺风险高。",
+      "replacement": "持久"
+    },
+    {
+      "term": "绝对",
+      "reason": "绝对化承诺风险高。",
+      "replacement": "更有把握"
+    },
+    {
+      "term": "无副作用",
+      "reason": "医疗健康类承诺风险高。",
+      "replacement": "温和配方"
+    },
+    {
+      "term": "100%",
+      "reason": "绝对化数字承诺风险高。",
+      "replacement": "尽可能"
+    },
+    {
+      "term": "治疗",
+      "reason": "医疗化表述，普通商品不应承诺治疗效果。",
+      "replacement": "护理"
+    },
+    {
+      "term": "国家级",
+      "reason": "权威背书类表述需要严格证明。",
+      "replacement": "高标准"
+    },
+    {
+      "term": "全网最低",
+      "reason": "价格绝对化与比较广告风险高。",
+      "replacement": "价格有竞争力"
+    },
+    {
+      "term": "生发",
+      "reason": "洗护个护类医疗/功效承诺风险高。",
+      "replacement": "发根更显蓬松"
+    },
+    {
+      "term": "防脱",
+      "reason": "防脱功效需要特殊资质和证明。",
+      "replacement": "日常头皮护理"
+    },
+    {
+      "term": "治疗头皮",
+      "reason": "医疗化表述，普通洗护商品不应承诺治疗。",
+      "replacement": "头皮清洁护理"
+    },
+    {
+      "term": "根治头屑",
+      "reason": "根治类医疗化承诺风险高。",
+      "replacement": "减少头屑困扰感"
+    },
+    {
+      "term": "永久修复",
+      "reason": "永久性修复承诺风险高。",
+      "replacement": "持续护理"
+    },
+    {
+      "term": "医学修复",
+      "reason": "医学背书类功效表述需要严格资质。",
+      "replacement": "温和修护"
+    },
+    {
+      "term": "绝对安全",
+      "reason": "母婴类绝对安全承诺风险高。",
+      "replacement": "温和安心"
+    },
+    {
+      "term": "婴儿专用第一",
+      "reason": "排名类和母婴绝对化表述风险高。",
+      "replacement": "适合母婴家庭日常使用"
+    },
+    {
+      "term": "治疗红屁屁",
+      "reason": "母婴护理医疗化功效承诺风险高。",
+      "replacement": "日常擦拭更温和"
+    },
+    {
+      "term": "杀菌率100%",
+      "reason": "绝对化杀菌数字承诺风险高。",
+      "replacement": "清洁更安心"
+    },
+    {
+      "term": "减肥",
+      "reason": "食品类减肥功效承诺风险高。",
+      "replacement": "轻负担选择"
+    },
+    {
+      "term": "保健功效",
+      "reason": "普通食品不应承诺保健功效。",
+      "replacement": "日常休闲选择"
+    },
+    {
+      "term": "养生治病",
+      "reason": "食品类治疗疾病承诺风险高。",
+      "replacement": "日常饮食场景"
+    }
+  ]
+}
