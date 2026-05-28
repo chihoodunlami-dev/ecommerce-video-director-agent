@@ -61,6 +61,7 @@ def generate_original_scripts_from_references(
             "provider": "local",
             "model": "local",
             "generation_mode": product.generation_mode,
+            "requested_generation_mode": product.generation_mode,
             "script_mode": product.script_mode,
             "category": category,
             "reference_ids": [item.get("id", "") for item in references],
@@ -91,6 +92,7 @@ def _maybe_apply_llm_reference_rewrite(
                 "generation_source": "local_fallback",
                 "provider": "local",
                 "model": "local",
+                "generation_mode": "local_only",
                 "fallback_reason": resolve_error or "LLM provider is local",
             }
         )
@@ -125,6 +127,7 @@ def _maybe_apply_llm_reference_rewrite(
                 "generation_source": "local_fallback",
                 "provider": provider,
                 "model": model,
+                "generation_mode": "local_only",
                 "fallback_reason": str(exc),
             }
         )

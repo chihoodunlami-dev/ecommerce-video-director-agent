@@ -293,12 +293,30 @@ def test_ai_drama_result_has_quality_score():
     assert quality["improvements"]
 
 
-def test_ai_drama_local_only_is_default_generation_mode():
+def test_ai_drama_local_only_remains_available_for_tests_and_debugging():
     result = generate_script(drama_product(), settings=LOCAL_SETTINGS)
 
     assert result.metadata["generation_source"] == "local_drama"
     assert result.metadata["provider"] == "local"
     assert result.metadata["generation_mode"] == "local_only"
+
+
+def test_product_default_generation_mode_is_llm_first():
+    info = product().normalized()
+
+    assert info.generation_mode == "llm_generate_with_local_compliance"
+
+
+def test_ai_drama_llm_generate_with_local_compliance_uses_client():
+    info = drama_product(generation_mode="llm_generate_with_local_compliance")
+    client = FakePolishClient(local_drama_payload(info))
+
+    result = generate_script(info, settings=LOCAL_SETTINGS, llm_client=client)
+
+    assert result.metadata["generation_source"] == "llm"
+    assert result.metadata["generation_mode"] == "llm_generate_with_local_compliance"
+    assert result.metadata["requested_generation_mode"] == "llm_generate_with_local_compliance"
+    assert result.metadata["provider"] == "fake-polish"
 
 
 def test_ai_drama_local_plus_llm_polish_uses_client_without_changing_structure():

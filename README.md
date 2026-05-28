@@ -1,12 +1,31 @@
 # 电商短视频编导 Agent
 
-当前版本：`v0.9 视频爆款解析版`
+当前版本：`v1.0 大模型优先智能编导版`
 
-一个面向电商产品的短视频脚本生成 CLI + Streamlit 内部工具。项目采用“本地规则控流程 + 大模型负责生成”的混合架构：
+一个面向电商产品的短视频脚本生成 CLI + Streamlit 内部工具。项目采用“大模型优先 + 本地规则兜底”的混合架构：
 
 - 本地规则负责产品类目识别、类目策略匹配、合规风险词检查和 Markdown 渲染。
 - 大模型负责在明确 brief 和 JSON Schema 约束下生成脚本内容。
 - 没有配置 API Key、模型超时或返回非法 JSON 时，会自动回退到本地模板生成。
+
+## v1.0 大模型优先智能编导版说明
+
+v1.0 将普通用户侧生成策略调整为“大模型优先”：前台页面不再展示“本地稳定生成”选项，`local_only` 仅保留为后台 fallback、测试和调试用途。
+
+v1.0 已支持：
+
+- 页面默认生成模式改为“大模型多版本生成”，并保留“本地生成 + 大模型润色”。
+- 脚本生成优先调用 Qwen / OpenAI 等 LLM provider，失败时自动回退 `local_only`。
+- 爆款素材分析、参考文案原创迁移、视频素材分析和视频原创仿写优先调用 LLM。
+- 本地规则继续负责类目识别、真人实拍 / AI视频模式隔离、合规检查、输出结构校验、相似度规避和评分。
+- metadata 持续记录 `requested_generation_mode`、`generation_mode`、`analysis_source`、`generation_source`、`provider`、`model`、`fallback_reason`。
+
+v1.0 测试结果：
+
+```bash
+.venv/bin/python -m pytest -q
+# 51 passed
+```
 
 ## 功能
 
@@ -359,13 +378,13 @@ DASHSCOPE_API_KEY = "你的key"
 APP_PASSWORD = "你的公司内部访问密码"
 ```
 
-当前配置使用 `llm.provider=domestic`、`api_key_env=DASHSCOPE_API_KEY`、`model=qwen-plus`。页面默认可选择“本地生成 + 大模型润色”；如果没有配置 `DASHSCOPE_API_KEY`，会自动回退到本地稳定生成 `local_only`。也可以在页面中手动选择“本地稳定生成”。
+当前配置使用 `llm.provider=domestic`、`api_key_env=DASHSCOPE_API_KEY`、`model=qwen-plus`。页面默认使用“大模型多版本生成”，也可选择“本地生成 + 大模型润色”；如果没有配置 `DASHSCOPE_API_KEY`，会自动回退到本地稳定生成 `local_only`。`local_only` 不再作为普通用户页面选项展示。
 
 注意事项：
 
 - 不要把 `.env` 或 `.streamlit/secrets.toml` 提交到 GitHub。
-- 不配置 `DASHSCOPE_API_KEY` 时，系统会使用 `local_only` 本地稳定生成模式，不调用大模型。
-- 使用 `local_plus_llm_polish` 会调用 Qwen/DashScope，并消耗你的 API 额度。
+- 不配置 `DASHSCOPE_API_KEY` 时，系统会自动 fallback 到 `local_only`，不调用大模型。
+- 使用“大模型多版本生成”或 `local_plus_llm_polish` 会调用 Qwen/DashScope，并消耗你的 API 额度。
 
 ## 大模型配置
 

@@ -31,15 +31,15 @@ class ProductInfo:
     video_style: str = ""
     character_setting: str = ""
     scene_setting: str = ""
-    generation_mode: str = "local_only"
+    generation_mode: str = "llm_generate_with_local_compliance"
 
     def normalized(self) -> "ProductInfo":
         mode = self.script_mode.strip().lower()
         if mode not in SUPPORTED_SCRIPT_MODES:
             raise ValueError("script_mode must be live_action or ai_video")
-        generation_mode = (self.generation_mode or "local_only").strip()
+        generation_mode = (self.generation_mode or "llm_generate_with_local_compliance").strip()
         if generation_mode not in SUPPORTED_GENERATION_MODES:
-            raise ValueError("generation_mode must be local_only, local_plus_llm_polish, or llm_generate_with_local_compliance")
+            raise ValueError("generation_mode must be llm_generate_with_local_compliance, local_plus_llm_polish, or local_only")
         return ProductInfo(
             product_name=self.product_name.strip(),
             category=self.category.strip(),

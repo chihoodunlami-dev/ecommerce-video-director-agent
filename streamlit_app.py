@@ -43,11 +43,10 @@ SCRIPT_MODE_LABELS = {
 ASPECT_RATIOS = ["9:16", "16:9", "1:1"]
 AI_TOOLS = ["Seedance", "即梦", "可灵", "Runway", "海螺", "Sora"]
 GENERATION_MODE_LABELS = {
-    "本地稳定生成": "local_only",
+    "大模型多版本生成": "llm_generate_with_local_compliance",
     "本地生成 + 大模型润色": "local_plus_llm_polish",
-    "大模型生成 + 本地合规兜底（预留）": "llm_generate_with_local_compliance",
 }
-GENERATION_MODE_OPTIONS = ["本地生成 + 大模型润色", "本地稳定生成"]
+GENERATION_MODE_OPTIONS = ["大模型多版本生成", "本地生成 + 大模型润色"]
 WORKSPACE_OPTIONS = ["脚本生成工作台", "爆款素材学习库"]
 FORM_KEYS = {
     "product_name": "form_product_name",
@@ -305,14 +304,12 @@ def ensure_form_defaults(default_platform: str, default_duration: int) -> None:
         FORM_KEYS["character_setting"]: "精致职场女生，早上通勤前整理发型",
         FORM_KEYS["scene_setting"]: "高级浴室和通勤前梳妆台",
         FORM_KEYS["ai_tool"]: "Seedance",
-        FORM_KEYS["generation_mode_label"]: "本地生成 + 大模型润色",
+        FORM_KEYS["generation_mode_label"]: "大模型多版本生成",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
-    if not st.session_state.get("v06_generation_mode_defaulted"):
-        if st.session_state.get(FORM_KEYS["generation_mode_label"]) == "本地稳定生成":
-            st.session_state[FORM_KEYS["generation_mode_label"]] = "本地生成 + 大模型润色"
-        st.session_state["v06_generation_mode_defaulted"] = True
+    if st.session_state.get(FORM_KEYS["generation_mode_label"]) not in GENERATION_MODE_OPTIONS:
+        st.session_state[FORM_KEYS["generation_mode_label"]] = "大模型多版本生成"
 
 
 def render_example_loader() -> None:
@@ -369,7 +366,7 @@ def apply_example_to_form(example: Dict[str, Any]) -> None:
         FORM_KEYS["character_setting"]: example.get("character_setting", ""),
         FORM_KEYS["scene_setting"]: example.get("scene_setting", ""),
         FORM_KEYS["ai_tool"]: _allowed_value(example.get("ai_tool", "Seedance") or "Seedance", AI_TOOLS, "Seedance"),
-        FORM_KEYS["generation_mode_label"]: "本地生成 + 大模型润色",
+        FORM_KEYS["generation_mode_label"]: "大模型多版本生成",
     }
     for key, value in values.items():
         st.session_state[key] = value
@@ -845,7 +842,10 @@ def build_product_from_form_state() -> ProductInfo:
         video_style=st.session_state.get(FORM_KEYS["video_style"], ""),
         character_setting=st.session_state.get(FORM_KEYS["character_setting"], ""),
         scene_setting=st.session_state.get(FORM_KEYS["scene_setting"], ""),
-        generation_mode=GENERATION_MODE_LABELS.get(st.session_state.get(FORM_KEYS["generation_mode_label"], "本地稳定生成"), "local_only"),
+        generation_mode=GENERATION_MODE_LABELS.get(
+            st.session_state.get(FORM_KEYS["generation_mode_label"], "大模型多版本生成"),
+            "llm_generate_with_local_compliance",
+        ),
     )
 
 

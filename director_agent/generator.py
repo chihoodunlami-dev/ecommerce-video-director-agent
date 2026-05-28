@@ -27,85 +27,130 @@ def generate_script(
     category = recognize_category(product.product_name, product.selling_points, product.category)
     strategy = get_strategy(category).__dict__
 
-    if _is_ai_drama_request(product):
-        payload = build_local_script_payload(product, category, strategy)
-        result = ScriptResult.from_dict(
-            payload,
-            category=category,
-            strategy=strategy,
-            script_mode=product.script_mode,
-            metadata={
-                "generation_source": "local_drama",
-                "provider": "local",
-                "generation_mode": "local_only",
-                "requested_generation_mode": product.generation_mode,
-                **normalization_metadata,
-            },
-        )
-        if product.generation_mode == "local_plus_llm_polish":
-            return _polish_local_result(product, category, strategy, result, active_settings, llm_client)
-        if product.generation_mode == "llm_generate_with_local_compliance":
-            result.metadata["fallback_reason"] = "llm_generate_with_local_compliance is reserved for a later version"
-            result.metadata["requested_generation_mode"] = product.generation_mode
+    local_source = "local_drama" if _is_ai_drama_request(product) else "local_only"
+    if product.generation_mode == "local_only":
+        result = _build_local_result(product, category, strategy, normalization_metadata, local_source)
         return _finalize_result(product, result)
 
-    client_error: Optional[str] = None
-    client = llm_client
-    if client is None:
-        try:
-            client = create_llm_client(active_settings)
-        except LLMError as exc:
-            client_error = str(exc)
+    if product.generation_mode == "local_plus_llm_polish":
+        result = _build_local_result(product, category, strategy, normalization_metadata, local_source)
+        return _polish_local_result(product, category, strategy, result, active_settings, llm_client)
 
-    if client is not None:
-        max_retries = int(active_settings.get("llm", {}).get("max_retries", 2))
-        messages = build_messages(product, category, strategy)
-        for attempt in range(max_retries + 1):
-            try:
-                payload = client.generate(messages, get_schema())
-                result = ScriptResult.from_dict(
-                    payload,
-                    category=category,
-                    strategy=strategy,
-                    script_mode=product.script_mode,
-                    metadata={
-                        "generation_source": "llm",
-                        "provider": client.provider_name,
-                        "generation_mode": product.generation_mode,
-                        "attempt": attempt + 1,
-                        **normalization_metadata,
-                    },
-                )
-                return _finalize_result(product, result)
-            except Exception as exc:
-                client_error = str(exc)
-                if attempt < max_retries:
-                    messages = messages + [
-                        {
-                            "role": "user",
-                            "content": (
-                                "上一次输出没有通过结构化校验。"
-                                f"错误：{client_error}。"
-                                "请只返回完整、合法、符合 Schema 的 JSON。"
-                            ),
-                        }
-                    ]
+    local_result = _build_local_result(product, category, strategy, normalization_metadata, "local_fallback")
+    return _generate_with_llm_or_fallback(product, category, strategy, local_result, active_settings, llm_client)
+
+
+def _build_local_result(
+    product: ProductInfo,
+    category: str,
+    strategy: Dict[str, Any],
+    normalization_metadata: Dict[str, Any],
+    generation_source: str,
+    fallback_reason: str = "",
+) -> ScriptResult:
+    metadata = {
+        "generation_source": generation_source,
+        "provider": "local",
+        "model": "local",
+        "generation_mode": "local_only",
+        "requested_generation_mode": product.generation_mode,
+        **normalization_metadata,
+    }
+    if fallback_reason:
+        metadata["fallback_reason"] = fallback_reason
 
     payload = build_local_script_payload(product, category, strategy)
-    result = ScriptResult.from_dict(
+    return ScriptResult.from_dict(
         payload,
         category=category,
         strategy=strategy,
         script_mode=product.script_mode,
-        metadata={
-            "generation_source": "local_fallback",
-            "provider": "local",
-            "generation_mode": "local_only",
-            "fallback_reason": client_error or "LLM provider is local",
-            **normalization_metadata,
-        },
+        metadata=metadata,
     )
-    return _finalize_result(product, result)
+
+
+def _generate_with_llm_or_fallback(
+    product: ProductInfo,
+    category: str,
+    strategy: Dict[str, Any],
+    local_result: ScriptResult,
+    settings: Dict[str, Any],
+    llm_client: Optional[LLMClient],
+) -> ScriptResult:
+    client_error: Optional[str] = None
+    client = llm_client
+    if client is None:
+        try:
+            client = create_llm_client(settings)
+        except LLMError as exc:
+            client_error = str(exc)
+
+    if client is None:
+        local_result.metadata.update(
+            {
+                "generation_source": "local_fallback",
+                "provider": "local",
+                "model": "local",
+                "generation_mode": "local_only",
+                "requested_generation_mode": product.generation_mode,
+                "fallback_reason": client_error or "LLM provider is local",
+            }
+        )
+        return _finalize_result(product, local_result)
+
+    provider_name = getattr(client, "provider_name", "unknown")
+    model_name = getattr(client, "model", "unknown")
+    max_retries = int(settings.get("llm", {}).get("max_retries", 2))
+    messages = build_messages(product, category, strategy)
+    for attempt in range(max_retries + 1):
+        try:
+            payload = client.generate(messages, get_schema())
+            result = ScriptResult.from_dict(
+                payload,
+                category=category,
+                strategy=strategy,
+                script_mode=product.script_mode,
+                metadata={
+                    **_workflow_metadata(local_result),
+                    "generation_source": "llm",
+                    "provider": provider_name,
+                    "model": model_name,
+                    "generation_mode": product.generation_mode,
+                    "requested_generation_mode": product.generation_mode,
+                    "attempt": attempt + 1,
+                },
+            )
+            return _finalize_result(product, result)
+        except Exception as exc:
+            client_error = str(exc)
+            if attempt < max_retries:
+                messages = messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "上一次输出没有通过结构化校验或本地检查。"
+                            f"错误：{client_error}。"
+                            "请只返回完整、合法、符合 Schema 的 JSON，并保持类目、模式、时长和字段约束。"
+                        ),
+                    }
+                ]
+
+    local_result.metadata.update(
+        {
+            "generation_source": "local_fallback",
+            "provider": provider_name,
+            "model": model_name,
+            "generation_mode": "local_only",
+            "requested_generation_mode": product.generation_mode,
+            "fallback_reason": client_error or "LLM generation failed",
+        }
+    )
+    return _finalize_result(product, local_result)
+
+
+def _workflow_metadata(local_result: ScriptResult) -> Dict[str, Any]:
+    blocked = {"generation_source", "provider", "model", "generation_mode", "requested_generation_mode", "fallback_reason", "attempt"}
+    return {key: value for key, value in local_result.metadata.items() if key not in blocked}
 
 
 def _is_ai_drama_request(product: ProductInfo) -> bool:
@@ -131,6 +176,8 @@ def _polish_local_result(
     if client is None:
         local_result.metadata["generation_mode"] = "local_only"
         local_result.metadata["requested_generation_mode"] = "local_plus_llm_polish"
+        local_result.metadata["provider"] = "local"
+        local_result.metadata["model"] = "local"
         local_result.metadata["fallback_reason"] = client_error or "LLM provider is local"
         _log_llm_polish(f"skip provider=local model=none success=false reason={local_result.metadata['fallback_reason']}")
         return _finalize_result(product, local_result)
@@ -157,6 +204,7 @@ def _polish_local_result(
                     **local_result.metadata,
                     "generation_source": "local_drama+llm_polish",
                     "provider": client.provider_name,
+                    "model": model_name,
                     "generation_mode": "local_plus_llm_polish",
                     "requested_generation_mode": "local_plus_llm_polish",
                     "attempt": attempt + 1,
@@ -184,6 +232,8 @@ def _polish_local_result(
 
     local_result.metadata["generation_mode"] = "local_only"
     local_result.metadata["requested_generation_mode"] = "local_plus_llm_polish"
+    local_result.metadata["provider"] = provider_name
+    local_result.metadata["model"] = model_name
     local_result.metadata["fallback_reason"] = f"LLM polish failed: {client_error}"
     local_result.metadata["llm_provider"] = provider_name
     local_result.metadata["llm_model"] = model_name

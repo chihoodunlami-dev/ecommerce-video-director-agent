@@ -56,7 +56,7 @@ def collect_product_info(settings: dict) -> ProductInfo:
     character_setting = input("人物设定（可留空）：").strip()
     scene_setting = input("场景设定（可留空）：").strip()
     ai_tool = input("AI 工具（可留空）：").strip()
-    generation_mode = input("生成模式 local_only / local_plus_llm_polish / llm_generate_with_local_compliance（默认 local_only）：").strip() or "local_only"
+    generation_mode = input("生成模式 llm_generate_with_local_compliance / local_plus_llm_polish / local_only（默认 llm_generate_with_local_compliance）：").strip() or "llm_generate_with_local_compliance"
 
     return ProductInfo(
         product_name=product_name,

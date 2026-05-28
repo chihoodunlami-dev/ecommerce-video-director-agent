@@ -56,6 +56,8 @@ def generate_video_imitation_scripts(
             "analysis_source": _video_analysis_source(video_analysis),
             "provider": "local",
             "model": "local",
+            "generation_mode": product.generation_mode,
+            "requested_generation_mode": product.generation_mode,
             "script_mode": product.script_mode,
             "category": category,
             "video_title": video_material.get("title", ""),
@@ -87,6 +89,7 @@ def _maybe_apply_llm_video_imitation(
                 "generation_source": "local_fallback",
                 "provider": "local",
                 "model": "local",
+                "generation_mode": "local_only",
                 "fallback_reason": resolve_error or "LLM provider is local",
             }
         )
@@ -122,6 +125,7 @@ def _maybe_apply_llm_video_imitation(
                 "generation_source": "local_fallback",
                 "provider": provider,
                 "model": model,
+                "generation_mode": "local_only",
                 "fallback_reason": str(exc),
             }
         )
