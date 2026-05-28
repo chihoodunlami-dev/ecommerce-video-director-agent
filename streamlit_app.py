@@ -453,25 +453,34 @@ def render_copy_learning_area() -> None:
     input_col, library_col = st.columns([0.46, 0.54], gap="large")
     with input_col:
         with st.container(border=True):
-            card_title("添加参考素材")
+            card_title("快速添加参考素材")
             ref_title = st.text_input("素材标题", key="ref_title")
             ref_platform = st.selectbox("来源平台", ["抖音", "小红书", "快手", "视频号", "淘宝", "1688", "网页", "其他"], key="ref_platform")
-            ref_url = st.text_input("原始链接", key="ref_url")
+            ref_url = st.text_input("来源链接，选填", key="ref_url")
+            st.caption("当前版本不会自动抓取链接内容，请将笔记正文、视频口播或字幕粘贴到素材内容中。链接仅用于记录来源。")
             ref_category = st.selectbox(
                 "产品类目",
                 ["洗护个护类", "母婴纸品类", "冻品餐饮类", "1688工厂定制类", "食品零食类", "家清日用品类", "美妆护肤类", "厨房用品类", "宠物用品类", "其他"],
                 key="ref_category",
             )
-            ref_content_type = st.selectbox("内容类型", ["短视频口播", "短剧广告", "小红书笔记", "直播切片", "商品详情页", "同行案例"], key="ref_content_type")
-            ref_copy = st.text_area("原始文案", height=160, key="ref_original_copy")
-            ref_engagement = st.text_input("互动数据", placeholder="例如：点赞2.1万，评论820，收藏5000", key="ref_engagement")
-            ref_note = st.text_area("用户备注", height=72, key="ref_user_note")
+            ref_copy = st.text_area(
+                "素材内容",
+                height=220,
+                placeholder="请粘贴小红书笔记正文、短视频口播稿、字幕文案、网页摘录或你的整理备注。",
+                key="ref_original_copy",
+            )
+            with st.expander("高级信息，可选", expanded=False):
+                ref_content_type = st.selectbox("内容类型", ["短视频口播", "短剧广告", "小红书笔记", "直播切片", "商品详情页", "同行案例"], key="ref_content_type")
+                ref_engagement = st.text_input("互动数据", placeholder="例如：点赞2.1万，评论820，收藏5000", key="ref_engagement")
+                ref_note = st.text_area("用户备注", height=72, key="ref_user_note")
 
             analyze_col, save_col = st.columns(2)
             with analyze_col:
                 if st.button("分析素材", use_container_width=True):
-                    if not ref_title.strip() or not ref_copy.strip():
-                        st.error("素材标题和原始文案不能为空。")
+                    if not ref_title.strip():
+                        st.error("素材标题不能为空。")
+                    elif not ref_copy.strip():
+                        st.error("当前版本无法仅凭链接分析，请粘贴具体文案内容后再分析。")
                     else:
                         draft = build_reference_draft(
                             ref_title,
