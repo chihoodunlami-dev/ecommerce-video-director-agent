@@ -14,6 +14,56 @@ VIDEO_TRANSCRIPT = """
 """
 
 
+class FakeVideoLLM:
+    provider_name = "qwen"
+    model = "qwen-plus-test"
+
+    def generate(self, messages, schema):
+        if "original_scripts" in schema.get("required", []):
+            return {
+                "original_scripts": [
+                    {
+                        "方案名称": f"LLM视频仿写方案 {index + 1}",
+                        "参考了视频的什么结构": "钩子 -> 状态困扰 -> 产品中段出现 -> 轻转化",
+                        "原创改动点": ["改写开头表达", "替换为生姜洗发水场景", "重写产品植入"],
+                        "适合平台": "抖音",
+                        "开头钩子": "出门前别只看穿搭，头发状态也很关键。",
+                        "完整脚本": "女主准备出门时发现头发贴头皮，转到浴室用生姜洗发水，重点展示泡沫和吹干后的蓬松感，最后提醒先收藏。",
+                        "字幕文案": ["出门前先看头发状态", "日常护理看细节", "先收藏对照选择"],
+                        "口播/对白": "这次不喊夸张效果，只看日常清爽和发根蓬松感。",
+                        "分镜/画面建议": ["镜前近景", "浴室产品特写", "吹发后状态镜头"],
+                        "产品植入方式": "产品在洗护动作开始时自然出现。",
+                        "结尾转化引导": "先收藏，对照自己的头发状态再选。",
+                        "AI画面提示词": "通勤前浴室，女主整理头发，生姜洗发水自然露出，电商短剧质感",
+                        "镜头运动": "近景推入，中段产品特写，结尾慢推定格",
+                        "负面提示词": "照抄原视频, 医疗功效, 夸大承诺",
+                        "连续性要求": "人物服装、浴室光线和产品包装保持一致。",
+                        "可直接复制版提示词": "生成9:16生姜洗发水电商短剧，通勤前浴室场景，展示清爽蓬松日常护理。",
+                    }
+                    for index in range(3)
+                ]
+            }
+        return {
+            "视频基础信息": {"视频标题": "通勤前洗发水视频", "来源平台": "抖音"},
+            "口播/字幕转写": VIDEO_TRANSCRIPT,
+            "开头3秒钩子": "先别急着买这瓶洗发水，先看通勤前状态。",
+            "视频节奏拆解": "状态钩子 -> 浴室洗护 -> 产品细节 -> 收藏引导",
+            "场景设计": ["浴室", "通勤前镜前"],
+            "人物关系": "闺蜜与女主",
+            "用户痛点": "头发贴头皮影响出门状态",
+            "剧情冲突": "出门前状态焦虑和产品护理细节形成反转",
+            "产品出现时机": "中段洗护动作开始时出现",
+            "卖点植入方式": "泡沫、香味、吹干后状态三段展示",
+            "镜头/画面特点": ["产品特写", "镜前状态对比"],
+            "字幕风格": "短句强节奏字幕",
+            "情绪触发点": ["状态焦虑", "精致期待"],
+            "转化引导方式": "先收藏，对照需求选择",
+            "可模仿结构": "状态钩子 -> 场景困扰 -> 产品介入 -> 轻转化",
+            "不能照搬的表达": ["先别急着买这瓶洗发水"],
+            "适合迁移到哪些产品": ["洗发水", "护发产品"],
+        }
+
+
 def video_material():
     return {
         "id": "video_test",
@@ -61,6 +111,15 @@ def test_manual_transcript_allows_video_analysis_without_service():
     assert analysis["产品出现时机"]
 
 
+def test_video_material_analysis_can_use_llm_client():
+    analysis = analyze_video_material(video_material(), llm_client=FakeVideoLLM())
+
+    assert analysis["metadata"]["analysis_source"] == "llm"
+    assert analysis["metadata"]["provider"] == "qwen"
+    assert analysis["metadata"]["model"] == "qwen-plus-test"
+    assert "状态钩子" in analysis["视频节奏拆解"]
+
+
 def test_video_imitation_generates_original_scripts():
     material = video_material()
     analysis = analyze_video_material(material)
@@ -72,6 +131,18 @@ def test_video_imitation_generates_original_scripts():
         assert variant["full_text"] != VIDEO_TRANSCRIPT
         assert VIDEO_TRANSCRIPT.strip() not in variant["full_text"]
         assert not variant["similarity_avoidance"]["is_too_similar"]
+
+
+def test_video_imitation_can_use_llm_client():
+    material = video_material()
+    analysis = analyze_video_material(material, llm_client=FakeVideoLLM())
+    output = generate_video_imitation_scripts(product(), analysis, material, version_count=3, llm_client=FakeVideoLLM())
+
+    assert output["metadata"]["generation_source"] == "llm_video_imitation"
+    assert output["metadata"]["analysis_source"] == "llm"
+    assert output["metadata"]["provider"] == "qwen"
+    assert output["metadata"]["model"] == "qwen-plus-test"
+    assert len(output["original_scripts"]) == 3
 
 
 def test_video_imitation_live_action_has_no_ai_prompt_fields():

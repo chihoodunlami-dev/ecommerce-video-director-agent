@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from .category import get_strategy, recognize_category
 from .compliance import check_compliance
 from .config import PROJECT_ROOT, load_yaml_like
+from .llm import LLMClient, resolve_llm_client
 from .models import ProductInfo
 from .script_modes import normalize_script_options
 
@@ -23,6 +24,8 @@ def generate_original_scripts_from_references(
     product_info: ProductInfo,
     references: List[Mapping[str, Any]],
     version_count: int = 3,
+    settings: Optional[Dict[str, Any]] = None,
+    llm_client: Optional[LLMClient] = None,
 ) -> Dict[str, Any]:
     product, normalization_metadata = normalize_script_options(product_info.normalized())
     rewrite_rules = _load_rules(REWRITE_RULE_PATH)
@@ -54,6 +57,9 @@ def generate_original_scripts_from_references(
         "quality_score": quality_score,
         "metadata": {
             "generation_source": "reference_structure_transfer",
+            "analysis_source": _reference_analysis_source(references),
+            "provider": "local",
+            "model": "local",
             "generation_mode": product.generation_mode,
             "script_mode": product.script_mode,
             "category": category,
@@ -63,8 +69,194 @@ def generate_original_scripts_from_references(
             "created_at": datetime.now().isoformat(timespec="seconds"),
         },
     }
+    output = _maybe_apply_llm_reference_rewrite(product, references, output, settings, llm_client)
     output["markdown"] = render_reference_rewrite_markdown(product, output)
     return output
+
+
+def _maybe_apply_llm_reference_rewrite(
+    product: ProductInfo,
+    references: List[Mapping[str, Any]],
+    local_output: Dict[str, Any],
+    settings: Optional[Dict[str, Any]],
+    llm_client: Optional[LLMClient],
+) -> Dict[str, Any]:
+    if settings is None and llm_client is None:
+        return local_output
+
+    client, resolve_error = resolve_llm_client(settings=settings, llm_client=llm_client)
+    if client is None:
+        local_output["metadata"].update(
+            {
+                "generation_source": "local_fallback",
+                "provider": "local",
+                "model": "local",
+                "fallback_reason": resolve_error or "LLM provider is local",
+            }
+        )
+        return local_output
+
+    provider = getattr(client, "provider_name", "unknown")
+    model = getattr(client, "model", "unknown")
+    try:
+        payload = client.generate(_reference_rewrite_messages(product, references, local_output), _reference_rewrite_schema())
+        variants = _normalize_llm_reference_variants(product, payload.get("original_scripts"), references)
+        if len(variants) < 3:
+            raise ValueError("LLM rewrite returned fewer than 3 script versions")
+
+        combined_text = "\n\n".join(item["markdown"] for item in variants)
+        risks = check_compliance(combined_text)
+        output = dict(local_output)
+        output["original_scripts"] = variants
+        output["risk_terms"] = [risk.__dict__ for risk in risks]
+        output["similarity_avoidance"] = _similarity_summary(variants, references)
+        output["quality_score"] = _score_rewrite_output(product, variants, references, risks)
+        output["metadata"] = {
+            **dict(local_output.get("metadata", {})),
+            "generation_source": "llm_reference_rewrite",
+            "provider": provider,
+            "model": model,
+        }
+        output["metadata"].pop("fallback_reason", None)
+        return output
+    except Exception as exc:
+        local_output["metadata"].update(
+            {
+                "generation_source": "local_fallback",
+                "provider": provider,
+                "model": model,
+                "fallback_reason": str(exc),
+            }
+        )
+        return local_output
+
+
+def _reference_rewrite_messages(
+    product: ProductInfo,
+    references: List[Mapping[str, Any]],
+    local_output: Mapping[str, Any],
+) -> List[Dict[str, str]]:
+    compact_references = []
+    for item in references[:5]:
+        analysis = item.get("analysis_result") if isinstance(item.get("analysis_result"), dict) else {}
+        compact_references.append(
+            {
+                "title": item.get("title", ""),
+                "platform": item.get("platform", ""),
+                "source_url": item.get("source_url", ""),
+                "category": item.get("category", ""),
+                "content_type": item.get("content_type", ""),
+                "analysis_result": analysis,
+                "avoid": analysis.get("不能照搬的表达", []),
+            }
+        )
+    request = {
+        "target_product": product.__dict__,
+        "references": compact_references,
+        "local_structure_example": {
+            "boom_formula": local_output.get("boom_formula", []),
+            "script_mode": product.script_mode,
+            "required_count": len(local_output.get("original_scripts", [])),
+        },
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是电商短视频原创迁移编导。你的任务是学习参考素材的结构和思路，"
+                "为目标产品写全新原创脚本，禁止照抄原文或只替换产品名。"
+            ),
+        },
+        {
+            "role": "developer",
+            "content": (
+                "只返回 JSON。必须生成 original_scripts 数组。每个方案至少在开头钩子、场景、人物关系、"
+                "剧情冲突、产品植入方式、转化引导或表达风格中三项不同。"
+                "真人实拍模式禁止出现 AI画面提示词、负面提示词、连续性要求；AI视频模式必须包含这些字段。"
+                "不要复用参考素材完整句子、品牌名、人名或专属剧情细节。"
+            ),
+        },
+        {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
+    ]
+
+
+def _reference_rewrite_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "original_scripts": {
+                "type": "array",
+                "items": {"type": "object"},
+            }
+        },
+        "required": ["original_scripts"],
+        "additionalProperties": True,
+    }
+
+
+def _normalize_llm_reference_variants(
+    product: ProductInfo,
+    variants: Any,
+    references: List[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not isinstance(variants, list):
+        return []
+    normalized = []
+    for index, raw in enumerate(variants[:5]):
+        if not isinstance(raw, Mapping):
+            continue
+        sections = raw.get("sections") if isinstance(raw.get("sections"), list) else []
+        markdown = str(raw.get("markdown") or "")
+        if not markdown:
+            markdown = _variant_markdown(product, sections, script_mode=product.script_mode) if sections else _llm_variant_markdown(product, raw)
+        if product.script_mode == "live_action":
+            markdown = _strip_ai_only_fields(markdown)
+        item = {
+            "version": int(raw.get("version") or index + 1),
+            "title": str(raw.get("title") or raw.get("方案标题") or f"LLM原创方案 {index + 1}"),
+            "hook": str(raw.get("hook") or raw.get("开头钩子") or ""),
+            "scene": str(raw.get("scene") or raw.get("场景") or ""),
+            "persona_relation": str(raw.get("persona_relation") or raw.get("人物关系") or ""),
+            "content_structure": str(raw.get("content_structure") or raw.get("内容结构") or ""),
+            "plot_conflict": str(raw.get("plot_conflict") or raw.get("剧情冲突") or ""),
+            "product_placement": str(raw.get("product_placement") or raw.get("产品植入方式") or ""),
+            "conversion": str(raw.get("conversion") or raw.get("转化引导") or ""),
+            "variation_axes": raw.get("variation_axes") if isinstance(raw.get("variation_axes"), list) else ["开头钩子", "场景", "产品植入方式"],
+            "sections": sections,
+            "markdown": markdown,
+        }
+        item["similarity_check"] = _check_similarity(item["markdown"], references, _load_rules(SIMILARITY_RULE_PATH))
+        item["risk_terms"] = [risk.__dict__ for risk in check_compliance(item["markdown"])]
+        normalized.append(item)
+    return normalized
+
+
+def _llm_variant_markdown(product: ProductInfo, raw: Mapping[str, Any]) -> str:
+    if product.script_mode == "live_action":
+        fields = ["开头钩子", "完整脚本", "字幕文案", "口播/对白", "分镜/画面建议", "产品植入方式", "结尾转化引导"]
+    else:
+        fields = ["开头钩子", "完整脚本", "AI画面提示词", "镜头运动", "字幕文案", "对白/口播", "负面提示词", "连续性要求", "可直接复制版提示词"]
+    lines = []
+    for field in fields:
+        value = raw.get(field) or raw.get(field.lower())
+        if value:
+            lines.append(f"- {field}：{_format_value(value)}")
+    return "\n".join(lines) or str(raw)
+
+
+def _strip_ai_only_fields(text: str) -> str:
+    blocked = ["AI画面提示词", "负面提示词", "连续性要求", "可直接复制版提示词"]
+    return "\n".join(line for line in text.splitlines() if not any(field in line for field in blocked))
+
+
+def _reference_analysis_source(references: List[Mapping[str, Any]]) -> str:
+    sources = []
+    for item in references:
+        analysis = item.get("analysis_result") if isinstance(item.get("analysis_result"), dict) else {}
+        metadata = analysis.get("metadata") if isinstance(analysis.get("metadata"), dict) else {}
+        if metadata.get("analysis_source"):
+            sources.append(str(metadata["analysis_source"]))
+    return ",".join(sorted(set(sources))) if sources else "unknown"
 
 
 def render_reference_rewrite_markdown(product: ProductInfo, output: Mapping[str, Any]) -> str:

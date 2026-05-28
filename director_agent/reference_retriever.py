@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from .config import PROJECT_ROOT
 from .copy_analyzer import analyze_reference_copy
+from .llm import LLMClient
 
 
 COPY_LIBRARY_DIR = PROJECT_ROOT / "references" / "copy_library"
@@ -42,6 +43,8 @@ def add_reference_material(
     engagement_data: str = "",
     user_note: str = "",
     analyze: bool = True,
+    settings: Optional[Dict[str, Any]] = None,
+    llm_client: Optional[LLMClient] = None,
 ) -> Dict[str, Any]:
     reference = {
         "id": _new_reference_id(),
@@ -57,12 +60,16 @@ def add_reference_material(
         "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     if analyze:
-        reference["analysis_result"] = analyze_reference_copy(reference)
-    save_reference_material(reference)
+        reference["analysis_result"] = analyze_reference_copy(reference, settings=settings, llm_client=llm_client)
+    save_reference_material(reference, settings=settings, llm_client=llm_client)
     return reference
 
 
-def save_reference_material(reference: Mapping[str, Any]) -> Dict[str, Any]:
+def save_reference_material(
+    reference: Mapping[str, Any],
+    settings: Optional[Dict[str, Any]] = None,
+    llm_client: Optional[LLMClient] = None,
+) -> Dict[str, Any]:
     ensure_copy_library()
     item = dict(reference)
     if not item.get("id"):
@@ -70,7 +77,7 @@ def save_reference_material(reference: Mapping[str, Any]) -> Dict[str, Any]:
     if not item.get("created_at"):
         item["created_at"] = datetime.now().isoformat(timespec="seconds")
     if not item.get("analysis_result"):
-        item["analysis_result"] = analyze_reference_copy(item)
+        item["analysis_result"] = analyze_reference_copy(item, settings=settings, llm_client=llm_client)
 
     item_path = COPY_LIBRARY_DIR / f"{item['id']}.json"
     item_path.write_text(json.dumps(item, ensure_ascii=False, indent=2), encoding="utf-8")

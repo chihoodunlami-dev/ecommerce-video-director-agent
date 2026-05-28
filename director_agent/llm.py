@@ -197,6 +197,22 @@ def create_llm_client(settings: Dict[str, Any]) -> Optional[LLMClient]:
     raise LLMError(f"Unknown LLM provider: {provider}")
 
 
+def resolve_llm_client(
+    settings: Optional[Dict[str, Any]] = None,
+    llm_client: Optional[LLMClient] = None,
+) -> tuple[Optional[LLMClient], str]:
+    """Resolve an optional LLM client without forcing local-only flows to call APIs."""
+
+    if llm_client is not None:
+        return llm_client, ""
+    if settings is None:
+        return None, "LLM settings were not provided"
+    try:
+        return create_llm_client(settings), ""
+    except LLMError as exc:
+        return None, str(exc)
+
+
 def get_secret_value(name: str) -> Optional[str]:
     """Read a secret from env first, then Streamlit Community Cloud secrets."""
 

@@ -505,7 +505,7 @@ def render_copy_learning_area() -> None:
                             ref_engagement,
                             ref_note,
                         )
-                        draft["analysis_result"] = analyze_reference_copy(draft)
+                        draft["analysis_result"] = analyze_reference_copy(draft, settings=load_settings())
                         st.session_state.reference_draft = draft
             with save_col:
                 if st.button("保存到素材库", use_container_width=True):
@@ -523,6 +523,7 @@ def render_copy_learning_area() -> None:
                             engagement_data=draft["engagement_data"],
                             user_note=draft["user_note"],
                             analyze=True,
+                            settings=load_settings(),
                         )
                         st.session_state.reference_draft = saved
                         st.success("已保存到 references/copy_library/。")
@@ -557,7 +558,12 @@ def render_copy_learning_area() -> None:
                 else:
                     current_product = build_product_from_form_state()
                     references = select_reference_materials(selected_ids)
-                    output = generate_original_scripts_from_references(current_product, references, version_count=version_count)
+                    output = generate_original_scripts_from_references(
+                        current_product,
+                        references,
+                        version_count=version_count,
+                        settings=load_settings(),
+                    )
                     markdown_path, json_path = write_reference_rewrite_outputs(current_product, output)
                     st.session_state.reference_rewrite_output = output
                     st.session_state.reference_rewrite_markdown_path = markdown_path
@@ -637,7 +643,7 @@ def render_video_learning_area() -> None:
                                 frame_result=frame_result,
                                 transcript_result=transcript_result,
                             )
-                            material["analysis_result"] = analyze_video_material(material)
+                            material["analysis_result"] = analyze_video_material(material, settings=load_settings())
                             st.session_state.video_material_draft = material
                         finally:
                             if video_path and video_path.exists():
@@ -677,6 +683,7 @@ def render_video_learning_area() -> None:
                         draft.get("analysis_result") or {},
                         draft,
                         version_count=int(version_count),
+                        settings=load_settings(),
                     )
                     markdown_path, json_path = write_video_imitation_outputs(current_product, output)
                     st.session_state.video_imitation_output = output
@@ -758,6 +765,9 @@ def render_video_analysis(analysis: Dict[str, Any]) -> None:
         "适合迁移到哪些产品",
     ]:
         st.markdown(f"**{field}：** {format_display_value(analysis.get(field, '未提取'))}")
+    if analysis.get("metadata"):
+        st.markdown("**metadata：**")
+        st.json(analysis.get("metadata"))
 
 
 def format_display_value(value: Any) -> str:
@@ -812,6 +822,9 @@ def render_reference_analysis(analysis: Dict[str, Any]) -> None:
         if isinstance(value, list):
             value = "；".join(str(item) for item in value)
         st.markdown(f"**{field}：** {value}")
+    if analysis.get("metadata"):
+        st.markdown("**metadata：**")
+        st.json(analysis.get("metadata"))
 
 
 def build_product_from_form_state() -> ProductInfo:

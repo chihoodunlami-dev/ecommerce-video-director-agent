@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from .category import recognize_category
 from .compliance import check_compliance
 from .config import PROJECT_ROOT, load_yaml_like
+from .llm import LLMClient, resolve_llm_client
 from .models import ProductInfo
 from .script_modes import normalize_script_options
 
@@ -23,6 +24,8 @@ def generate_video_imitation_scripts(
     video_analysis: Mapping[str, Any],
     video_material: Mapping[str, Any],
     version_count: int = 3,
+    settings: Optional[Dict[str, Any]] = None,
+    llm_client: Optional[LLMClient] = None,
 ) -> Dict[str, Any]:
     product, normalization_metadata = normalize_script_options(product_info.normalized())
     rules = _load_rules()
@@ -50,6 +53,9 @@ def generate_video_imitation_scripts(
         "similarity_avoidance": _similarity_summary(variants),
         "metadata": {
             "generation_source": "video_structure_imitation",
+            "analysis_source": _video_analysis_source(video_analysis),
+            "provider": "local",
+            "model": "local",
             "script_mode": product.script_mode,
             "category": category,
             "video_title": video_material.get("title", ""),
@@ -58,8 +64,168 @@ def generate_video_imitation_scripts(
             "created_at": datetime.now().isoformat(timespec="seconds"),
         },
     }
+    output = _maybe_apply_llm_video_imitation(product, video_analysis, video_material, output, settings, llm_client)
     output["markdown"] = render_video_imitation_markdown(product, output)
     return output
+
+
+def _maybe_apply_llm_video_imitation(
+    product: ProductInfo,
+    video_analysis: Mapping[str, Any],
+    video_material: Mapping[str, Any],
+    local_output: Dict[str, Any],
+    settings: Optional[Dict[str, Any]],
+    llm_client: Optional[LLMClient],
+) -> Dict[str, Any]:
+    if settings is None and llm_client is None:
+        return local_output
+
+    client, resolve_error = resolve_llm_client(settings=settings, llm_client=llm_client)
+    if client is None:
+        local_output["metadata"].update(
+            {
+                "generation_source": "local_fallback",
+                "provider": "local",
+                "model": "local",
+                "fallback_reason": resolve_error or "LLM provider is local",
+            }
+        )
+        return local_output
+
+    provider = getattr(client, "provider_name", "unknown")
+    model = getattr(client, "model", "unknown")
+    try:
+        payload = client.generate(
+            _video_imitation_messages(product, video_analysis, video_material, local_output),
+            _video_imitation_schema(),
+        )
+        variants = _normalize_llm_video_variants(product, payload.get("original_scripts"), video_material)
+        if len(variants) < 3:
+            raise ValueError("LLM video imitation returned fewer than 3 script versions")
+        combined = "\n\n".join(item["full_text"] for item in variants)
+        risks = check_compliance(combined)
+        output = dict(local_output)
+        output["original_scripts"] = variants
+        output["risk_terms"] = [risk.__dict__ for risk in risks]
+        output["similarity_avoidance"] = _similarity_summary(variants)
+        output["metadata"] = {
+            **dict(local_output.get("metadata", {})),
+            "generation_source": "llm_video_imitation",
+            "provider": provider,
+            "model": model,
+        }
+        output["metadata"].pop("fallback_reason", None)
+        return output
+    except Exception as exc:
+        local_output["metadata"].update(
+            {
+                "generation_source": "local_fallback",
+                "provider": provider,
+                "model": model,
+                "fallback_reason": str(exc),
+            }
+        )
+        return local_output
+
+
+def _video_imitation_messages(
+    product: ProductInfo,
+    video_analysis: Mapping[str, Any],
+    video_material: Mapping[str, Any],
+    local_output: Mapping[str, Any],
+) -> List[Dict[str, str]]:
+    request = {
+        "target_product": product.__dict__,
+        "video_analysis": video_analysis,
+        "video_source": {
+            "title": video_material.get("title", ""),
+            "platform": video_material.get("platform", ""),
+            "source_url": video_material.get("source_url", ""),
+            "transcript_excerpt": str(video_material.get("transcript") or video_material.get("manual_transcript") or "")[:2000],
+        },
+        "required_count": len(local_output.get("original_scripts", [])),
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是电商视频爆款原创仿写编导。你可以模仿视频结构、节奏、钩子和转化逻辑，"
+                "但必须为目标产品生成原创脚本。"
+            ),
+        },
+        {
+            "role": "developer",
+            "content": (
+                "只返回 JSON，必须包含 original_scripts 数组。不得照抄原视频文案，不得保留原视频品牌名、人名、专属剧情细节。"
+                "真人实拍模式不得输出 AI画面提示词、负面提示词、连续性要求、可直接复制版提示词。"
+                "AI视频模式必须输出 AI画面提示词、镜头运动、负面提示词、连续性要求、可直接复制版提示词。"
+            ),
+        },
+        {"role": "user", "content": json.dumps(request, ensure_ascii=False)},
+    ]
+
+
+def _video_imitation_schema() -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "original_scripts": {
+                "type": "array",
+                "items": {"type": "object"},
+            }
+        },
+        "required": ["original_scripts"],
+        "additionalProperties": True,
+    }
+
+
+def _normalize_llm_video_variants(
+    product: ProductInfo,
+    variants: Any,
+    video_material: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    if not isinstance(variants, list):
+        return []
+    original_text = str(video_material.get("transcript") or video_material.get("manual_transcript") or "")
+    normalized = []
+    for index, raw in enumerate(variants[:8]):
+        if not isinstance(raw, Mapping):
+            continue
+        item = {
+            "方案名称": str(raw.get("方案名称") or f"LLM原创仿写方案 {index + 1}"),
+            "参考了视频的什么结构": raw.get("参考了视频的什么结构", ""),
+            "原创改动点": raw.get("原创改动点", ["替换为当前产品", "重写场景和台词", "调整转化引导"]),
+            "适合平台": raw.get("适合平台", product.platform),
+            "开头钩子": raw.get("开头钩子", ""),
+            "完整脚本": raw.get("完整脚本", ""),
+            "字幕文案": raw.get("字幕文案", []),
+            "口播/对白": raw.get("口播/对白") or raw.get("对白/口播") or "",
+            "分镜/画面建议": raw.get("分镜/画面建议", []),
+            "产品植入方式": raw.get("产品植入方式", ""),
+            "结尾转化引导": raw.get("结尾转化引导", ""),
+        }
+        if product.script_mode == "ai_video":
+            item.update(
+                {
+                    "AI画面提示词": raw.get("AI画面提示词", ""),
+                    "镜头运动": raw.get("镜头运动", ""),
+                    "负面提示词": raw.get("负面提示词", "照抄原视频, 原品牌名, 原人名, 夸大承诺, 医疗功效, 低清画面, 字幕错乱"),
+                    "连续性要求": raw.get("连续性要求", "人物、产品、场景和字幕风格保持连续。"),
+                    "可直接复制版提示词": raw.get("可直接复制版提示词", ""),
+                }
+            )
+        full_text = json.dumps(item, ensure_ascii=False)
+        item["full_text"] = full_text
+        item["similarity_avoidance"] = _check_similarity(full_text, original_text)
+        item["compliance"] = [risk.__dict__ for risk in check_compliance(full_text)]
+        item["quality_score"] = _score_variant(product, item)
+        normalized.append(item)
+    return normalized
+
+
+def _video_analysis_source(video_analysis: Mapping[str, Any]) -> str:
+    metadata = video_analysis.get("metadata") if isinstance(video_analysis.get("metadata"), dict) else {}
+    return str(metadata.get("analysis_source") or "unknown")
 
 
 def render_video_imitation_markdown(product: ProductInfo, output: Mapping[str, Any]) -> str:

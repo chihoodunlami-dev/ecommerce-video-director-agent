@@ -2,18 +2,59 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from .config import PROJECT_ROOT, load_yaml_like
+from .llm import LLMClient, resolve_llm_client
 
 
 RULE_PATH = PROJECT_ROOT / "rules" / "copy_analysis_rules.json"
 
 
-def analyze_reference_copy(reference: Mapping[str, Any]) -> Dict[str, Any]:
+def analyze_reference_copy(
+    reference: Mapping[str, Any],
+    settings: Optional[Dict[str, Any]] = None,
+    llm_client: Optional[LLMClient] = None,
+) -> Dict[str, Any]:
     """Extract reusable structure from a reference without preserving its wording."""
+
+    local_result = _analyze_reference_copy_local(reference)
+    if settings is None and llm_client is None:
+        local_result["metadata"] = _analysis_metadata("local_rules", provider="local", model="local")
+        return local_result
+
+    client, resolve_error = resolve_llm_client(settings=settings, llm_client=llm_client)
+    if client is None:
+        local_result["metadata"] = _analysis_metadata(
+            "local_fallback",
+            provider="local",
+            model="local",
+            fallback_reason=resolve_error or "LLM provider is local",
+        )
+        return local_result
+
+    provider = getattr(client, "provider_name", "unknown")
+    model = getattr(client, "model", "unknown")
+    try:
+        payload = client.generate(_copy_analysis_messages(reference, local_result), _copy_analysis_schema())
+        result = _merge_analysis_result(local_result, payload)
+        result["metadata"] = _analysis_metadata("llm", provider=provider, model=model)
+        return result
+    except Exception as exc:
+        local_result["metadata"] = _analysis_metadata(
+            "local_fallback",
+            provider=provider,
+            model=model,
+            fallback_reason=str(exc),
+        )
+        return local_result
+
+
+def _analyze_reference_copy_local(reference: Mapping[str, Any]) -> Dict[str, Any]:
+    """Extract reusable structure with local deterministic rules."""
 
     rules = _load_rules()
     category = str(reference.get("category") or "通用类目")
@@ -45,6 +86,87 @@ def analyze_reference_copy(reference: Mapping[str, Any]) -> Dict[str, Any]:
         "爆款公式": "钩子制造停留 -> 场景放大痛点 -> 产品以解决方案出现 -> 细节证明 -> 轻转化引导",
         "analysis_version": "v0.8-local",
     }
+
+
+def _copy_analysis_messages(reference: Mapping[str, Any], local_result: Mapping[str, Any]) -> List[Dict[str, str]]:
+    compact_reference = {
+        "title": reference.get("title", ""),
+        "platform": reference.get("platform", ""),
+        "category": reference.get("category", ""),
+        "content_type": reference.get("content_type", ""),
+        "original_copy": str(reference.get("original_copy") or "")[:3500],
+        "engagement_data": reference.get("engagement_data", ""),
+        "user_note": reference.get("user_note", ""),
+        "local_analysis": local_result,
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是电商短视频爆款素材分析师。只学习结构、钩子、场景、人物关系和转化逻辑，"
+                "不得复述或照抄参考文案。"
+            ),
+        },
+        {
+            "role": "developer",
+            "content": (
+                "请只返回 JSON。字段必须包含：开头钩子、用户痛点、目标人群、场景设计、人物关系、内容结构、"
+                "卖点植入方式、情绪触发点、转化引导方式、可复用思路、不能照搬的表达、适合迁移的产品类型、爆款公式。"
+                "分析应抽象为可迁移方法，不保留原品牌名、人名或专属句子。"
+            ),
+        },
+        {"role": "user", "content": json.dumps(compact_reference, ensure_ascii=False)},
+    ]
+
+
+def _copy_analysis_schema() -> Dict[str, Any]:
+    fields = [
+        "开头钩子",
+        "用户痛点",
+        "目标人群",
+        "场景设计",
+        "人物关系",
+        "内容结构",
+        "卖点植入方式",
+        "情绪触发点",
+        "转化引导方式",
+        "可复用思路",
+        "不能照搬的表达",
+        "适合迁移的产品类型",
+        "爆款公式",
+    ]
+    return {
+        "type": "object",
+        "properties": {field: {"type": ["string", "array"]} for field in fields},
+        "required": fields,
+        "additionalProperties": True,
+    }
+
+
+def _merge_analysis_result(local_result: Mapping[str, Any], payload: Mapping[str, Any]) -> Dict[str, Any]:
+    result = dict(local_result)
+    for field in _copy_analysis_schema()["required"]:
+        value = payload.get(field)
+        if value:
+            result[field] = value
+    result["analysis_version"] = "v0.8-llm"
+    return result
+
+
+def _analysis_metadata(
+    analysis_source: str,
+    provider: str,
+    model: str,
+    fallback_reason: str = "",
+) -> Dict[str, str]:
+    metadata = {
+        "analysis_source": analysis_source,
+        "provider": provider,
+        "model": model,
+    }
+    if fallback_reason:
+        metadata["fallback_reason"] = fallback_reason
+    return metadata
 
 
 def _load_rules() -> Dict[str, Any]:

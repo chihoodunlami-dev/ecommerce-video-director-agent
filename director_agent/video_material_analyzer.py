@@ -7,9 +7,10 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 
 from .config import PROJECT_ROOT, load_yaml_like
+from .llm import LLMClient, resolve_llm_client
 
 
 VIDEO_LIBRARY_DIR = PROJECT_ROOT / "references" / "video_library"
@@ -17,7 +18,44 @@ VIDEO_INDEX_PATH = VIDEO_LIBRARY_DIR / "index.json"
 RULE_PATH = PROJECT_ROOT / "rules" / "video_analysis_rules.json"
 
 
-def analyze_video_material(material: Mapping[str, Any]) -> Dict[str, Any]:
+def analyze_video_material(
+    material: Mapping[str, Any],
+    settings: Optional[Dict[str, Any]] = None,
+    llm_client: Optional[LLMClient] = None,
+) -> Dict[str, Any]:
+    local_result = _analyze_video_material_local(material)
+    if settings is None and llm_client is None:
+        local_result["metadata"] = _analysis_metadata("local_rules", provider="local", model="local")
+        return local_result
+
+    client, resolve_error = resolve_llm_client(settings=settings, llm_client=llm_client)
+    if client is None:
+        local_result["metadata"] = _analysis_metadata(
+            "local_fallback",
+            provider="local",
+            model="local",
+            fallback_reason=resolve_error or "LLM provider is local",
+        )
+        return local_result
+
+    provider = getattr(client, "provider_name", "unknown")
+    model = getattr(client, "model", "unknown")
+    try:
+        payload = client.generate(_video_analysis_messages(material, local_result), _video_analysis_schema())
+        result = _merge_video_analysis(local_result, payload)
+        result["metadata"] = _analysis_metadata("llm", provider=provider, model=model)
+        return result
+    except Exception as exc:
+        local_result["metadata"] = _analysis_metadata(
+            "local_fallback",
+            provider=provider,
+            model=model,
+            fallback_reason=str(exc),
+        )
+        return local_result
+
+
+def _analyze_video_material_local(material: Mapping[str, Any]) -> Dict[str, Any]:
     rules = _load_rules()
     transcript = str(material.get("transcript") or material.get("manual_transcript") or "")
     sentences = _split_sentences(transcript)
@@ -77,6 +115,91 @@ def save_video_material(material: Mapping[str, Any]) -> Dict[str, Any]:
     index.insert(0, _index_record(item))
     VIDEO_INDEX_PATH.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
     return item
+
+
+def _video_analysis_messages(material: Mapping[str, Any], local_result: Mapping[str, Any]) -> List[Dict[str, str]]:
+    compact_material = {
+        "title": material.get("title", ""),
+        "platform": material.get("platform", ""),
+        "source_url": material.get("source_url", ""),
+        "category": material.get("category", ""),
+        "script_mode": material.get("script_mode", ""),
+        "transcript": str(material.get("transcript") or material.get("manual_transcript") or "")[:4000],
+        "frame_summaries": list(material.get("frame_summaries") or [])[:12],
+        "local_analysis": local_result,
+    }
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是电商爆款视频结构分析师。你只分析视频结构、节奏、钩子、场景和转化逻辑，"
+                "不得建议照抄原视频文案。"
+            ),
+        },
+        {
+            "role": "developer",
+            "content": (
+                "请只返回 JSON。字段必须包含：视频基础信息、口播/字幕转写、开头3秒钩子、视频节奏拆解、"
+                "场景设计、人物关系、用户痛点、剧情冲突、产品出现时机、卖点植入方式、镜头/画面特点、"
+                "字幕风格、情绪触发点、转化引导方式、可模仿结构、不能照搬的表达、适合迁移到哪些产品。"
+            ),
+        },
+        {"role": "user", "content": json.dumps(compact_material, ensure_ascii=False)},
+    ]
+
+
+def _video_analysis_schema() -> Dict[str, Any]:
+    fields = [
+        "视频基础信息",
+        "口播/字幕转写",
+        "开头3秒钩子",
+        "视频节奏拆解",
+        "场景设计",
+        "人物关系",
+        "用户痛点",
+        "剧情冲突",
+        "产品出现时机",
+        "卖点植入方式",
+        "镜头/画面特点",
+        "字幕风格",
+        "情绪触发点",
+        "转化引导方式",
+        "可模仿结构",
+        "不能照搬的表达",
+        "适合迁移到哪些产品",
+    ]
+    return {
+        "type": "object",
+        "properties": {field: {"type": ["string", "array", "object"]} for field in fields},
+        "required": fields,
+        "additionalProperties": True,
+    }
+
+
+def _merge_video_analysis(local_result: Mapping[str, Any], payload: Mapping[str, Any]) -> Dict[str, Any]:
+    result = dict(local_result)
+    for field in _video_analysis_schema()["required"]:
+        value = payload.get(field)
+        if value:
+            result[field] = value
+    result["analysis_version"] = "v0.9-llm"
+    return result
+
+
+def _analysis_metadata(
+    analysis_source: str,
+    provider: str,
+    model: str,
+    fallback_reason: str = "",
+) -> Dict[str, str]:
+    metadata = {
+        "analysis_source": analysis_source,
+        "provider": provider,
+        "model": model,
+    }
+    if fallback_reason:
+        metadata["fallback_reason"] = fallback_reason
+    return metadata
 
 
 def load_video_library() -> List[Dict[str, Any]]:
