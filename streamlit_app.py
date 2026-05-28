@@ -29,6 +29,10 @@ from director_agent.script_modes import (
     LIVE_ACTION_STYLES,
     LIVE_ACTION_SUBTYPES,
 )
+from director_agent.video_frame_extractor import extract_keyframes, save_uploaded_video_temporarily
+from director_agent.video_imitation_writer import generate_video_imitation_scripts, write_video_imitation_outputs
+from director_agent.video_material_analyzer import analyze_video_material, load_video_library, save_video_material
+from director_agent.video_transcriber import transcribe_video
 
 
 SCRIPT_MODE_LABELS = {
@@ -449,6 +453,15 @@ def render_copy_learning_area() -> None:
     st.caption(
         f"原创迁移将使用“脚本生成工作台”中的当前产品信息：{st.session_state.get(FORM_KEYS['product_name'], '未命名产品')}。"
     )
+    material_type = st.radio(
+        "素材类型",
+        ["文案 / 笔记素材", "视频素材"],
+        horizontal=True,
+        key="learning_material_type",
+    )
+    if material_type == "视频素材":
+        render_video_learning_area()
+        return
 
     input_col, library_col = st.columns([0.46, 0.54], gap="large")
     with input_col:
@@ -573,6 +586,186 @@ def render_copy_learning_area() -> None:
                         mime="application/json",
                         use_container_width=True,
                     )
+
+
+def render_video_learning_area() -> None:
+    input_col, output_col = st.columns([0.46, 0.54], gap="large")
+    with input_col:
+        with st.container(border=True):
+            card_title("上传视频素材")
+            uploaded_video = st.file_uploader("上传视频文件", type=["mp4", "mov", "m4v", "avi"], key="video_material_upload")
+            if uploaded_video:
+                st.video(uploaded_video)
+            video_title = st.text_input("视频标题", key="video_title")
+            video_platform = st.selectbox("来源平台", ["抖音", "小红书", "快手", "视频号", "淘宝", "1688", "网页", "其他"], key="video_platform")
+            video_url = st.text_input("原始链接，选填，仅记录来源", key="video_source_url")
+            video_category = st.selectbox(
+                "产品类目",
+                ["洗护个护类", "母婴纸品类", "冻品餐饮类", "1688工厂定制类", "食品零食类", "家清日用品类", "美妆护肤类", "厨房用品类", "宠物用品类", "其他"],
+                key="video_category",
+            )
+            manual_transcript = st.text_area(
+                "补充口播/字幕文案，选填",
+                height=150,
+                placeholder="如果没有自动转写服务，请粘贴视频口播稿、字幕文案或你的整理版内容。",
+                key="video_manual_transcript",
+            )
+            video_note = st.text_area("素材备注，选填", height=72, key="video_note")
+
+            analyze_col, save_col = st.columns(2)
+            with analyze_col:
+                if st.button("分析视频素材", use_container_width=True):
+                    if not uploaded_video:
+                        st.error("请先上传视频文件。")
+                    elif not video_title.strip():
+                        st.error("视频标题不能为空。")
+                    else:
+                        video_path = None
+                        try:
+                            video_path = save_uploaded_video_temporarily(uploaded_video)
+                            frame_result = extract_keyframes(video_path)
+                            transcript_result = transcribe_video(video_path, manual_transcript)
+                            if not transcript_result["transcript"]:
+                                st.warning("当前环境没有可用自动转写结果，请补充口播或字幕文案以提升分析准确度。")
+                            material = build_video_material_draft(
+                                title=video_title,
+                                platform=video_platform,
+                                source_url=video_url,
+                                category=video_category,
+                                transcript=transcript_result["transcript"],
+                                note=video_note,
+                                frame_result=frame_result,
+                                transcript_result=transcript_result,
+                            )
+                            material["analysis_result"] = analyze_video_material(material)
+                            st.session_state.video_material_draft = material
+                        finally:
+                            if video_path and video_path.exists():
+                                video_path.unlink(missing_ok=True)
+            with save_col:
+                if st.button("保存到视频素材库", use_container_width=True):
+                    draft = st.session_state.get("video_material_draft")
+                    if not draft:
+                        st.error("请先点击“分析视频素材”。")
+                    else:
+                        saved = save_video_material(draft)
+                        st.session_state.video_material_draft = saved
+                        st.success("已保存到 references/video_library/。")
+
+            draft = st.session_state.get("video_material_draft")
+            if draft:
+                st.markdown("#### 视频素材分析报告")
+                render_video_analysis(draft.get("analysis_result") or {})
+
+    with output_col:
+        with st.container(border=True):
+            card_title("视频原创仿写生成")
+            video_library = load_video_library()
+            if video_library:
+                st.caption(f"视频素材库已有 {len(video_library)} 条记录。当前按钮默认基于左侧刚分析的视频生成。")
+            else:
+                st.caption("视频素材库暂无保存记录。你仍可基于左侧刚分析的视频直接生成原创脚本。")
+            version_count = st.selectbox("原创脚本方案数量", [3, 5, 8], key="video_imitation_version_count")
+            if st.button("基于该视频生成原创脚本", use_container_width=True):
+                draft = st.session_state.get("video_material_draft")
+                if not draft:
+                    st.error("请先分析一条视频素材。")
+                else:
+                    current_product = build_product_from_form_state()
+                    output = generate_video_imitation_scripts(
+                        current_product,
+                        draft.get("analysis_result") or {},
+                        draft,
+                        version_count=int(version_count),
+                    )
+                    markdown_path, json_path = write_video_imitation_outputs(current_product, output)
+                    st.session_state.video_imitation_output = output
+                    st.session_state.video_imitation_markdown_path = markdown_path
+                    st.session_state.video_imitation_json_path = json_path
+
+            output = st.session_state.get("video_imitation_output")
+            if output:
+                st.markdown("#### 原创仿写结果")
+                st.markdown(output.get("markdown", ""))
+                output_path = st.session_state.get("video_imitation_markdown_path")
+                json_path = st.session_state.get("video_imitation_json_path")
+                download_cols = st.columns(2)
+                with download_cols[0]:
+                    st.download_button(
+                        "下载视频仿写 Markdown",
+                        data=output.get("markdown", ""),
+                        file_name=display_filename(output_path) or "video_imitation.md",
+                        mime="text/markdown",
+                        use_container_width=True,
+                    )
+                with download_cols[1]:
+                    st.download_button(
+                        "下载视频仿写 JSON",
+                        data=json.dumps({key: value for key, value in output.items() if key != "markdown"}, ensure_ascii=False, indent=2),
+                        file_name=display_filename(json_path) or "video_imitation.json",
+                        mime="application/json",
+                        use_container_width=True,
+                    )
+
+
+def build_video_material_draft(
+    title: str,
+    platform: str,
+    source_url: str,
+    category: str,
+    transcript: str,
+    note: str,
+    frame_result: Dict[str, Any],
+    transcript_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "id": "",
+        "title": title.strip(),
+        "platform": platform.strip(),
+        "source_url": source_url.strip(),
+        "category": category.strip(),
+        "transcript": transcript.strip(),
+        "transcript_source": transcript_result.get("source", "none"),
+        "transcription_note": transcript_result.get("note", ""),
+        "frame_paths": frame_result.get("frame_paths", []),
+        "frame_summaries": frame_result.get("frame_summaries", []),
+        "frame_extraction_backend": frame_result.get("backend", "none"),
+        "frame_extraction_note": frame_result.get("note", ""),
+        "note": note.strip(),
+        "analysis_result": {},
+        "created_at": "",
+    }
+
+
+def render_video_analysis(analysis: Dict[str, Any]) -> None:
+    for field in [
+        "视频基础信息",
+        "口播/字幕转写",
+        "开头3秒钩子",
+        "视频节奏拆解",
+        "场景设计",
+        "人物关系",
+        "用户痛点",
+        "剧情冲突",
+        "产品出现时机",
+        "卖点植入方式",
+        "镜头/画面特点",
+        "字幕风格",
+        "情绪触发点",
+        "转化引导方式",
+        "可模仿结构",
+        "不能照搬的表达",
+        "适合迁移到哪些产品",
+    ]:
+        st.markdown(f"**{field}：** {format_display_value(analysis.get(field, '未提取'))}")
+
+
+def format_display_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return "；".join(f"{key}：{item}" for key, item in value.items())
+    if isinstance(value, list):
+        return "；".join(str(item) for item in value)
+    return str(value)
 
 
 def build_reference_draft(

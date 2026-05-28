@@ -10,3 +10,9 @@ outputs/
 !outputs/
 outputs/*
 !outputs/.gitkeep
+
+references/video_library/raw_videos/
+references/video_library/frames/*
+!references/video_library/frames/.gitkeep
+temp/
+tmp/
