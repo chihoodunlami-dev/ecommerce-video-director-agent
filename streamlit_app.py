@@ -13,8 +13,15 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from director_agent.config import load_examples, load_settings
+from director_agent.copy_analyzer import analyze_reference_copy
+from director_agent.creative_rewriter import generate_original_scripts_from_references, write_reference_rewrite_outputs
 from director_agent.generator import generate_script
 from director_agent.models import ProductInfo
+from director_agent.reference_retriever import (
+    add_reference_material,
+    load_copy_library,
+    select_reference_materials,
+)
 from director_agent.renderer import render_markdown, sanitize_filename, write_outputs
 from director_agent.script_modes import (
     AI_VIDEO_STYLES,
@@ -96,6 +103,9 @@ def main() -> None:
                 add_history_record(product.normalized(), result, markdown, markdown_path)
 
         render_output_panel()
+
+    st.divider()
+    render_copy_learning_area()
 
 
 def require_app_access() -> None:
@@ -395,6 +405,194 @@ def render_output_panel() -> None:
 
     with action_col:
         render_action_panel(product, result, markdown)
+
+
+def render_copy_learning_area() -> None:
+    st.markdown("## 爆款素材学习")
+    st.caption("仅支持手动添加链接和粘贴文案。Agent 只学习结构和思路，不照抄参考文案原文。")
+
+    input_col, library_col = st.columns([0.46, 0.54], gap="large")
+    with input_col:
+        with st.container(border=True):
+            card_title("添加参考素材")
+            ref_title = st.text_input("素材标题", key="ref_title")
+            ref_platform = st.selectbox("来源平台", ["抖音", "小红书", "快手", "视频号", "淘宝", "1688", "网页", "其他"], key="ref_platform")
+            ref_url = st.text_input("原始链接", key="ref_url")
+            ref_category = st.selectbox(
+                "产品类目",
+                ["洗护个护类", "母婴纸品类", "冻品餐饮类", "1688工厂定制类", "食品零食类", "家清日用品类", "美妆护肤类", "厨房用品类", "宠物用品类", "其他"],
+                key="ref_category",
+            )
+            ref_content_type = st.selectbox("内容类型", ["短视频口播", "短剧广告", "小红书笔记", "直播切片", "商品详情页", "同行案例"], key="ref_content_type")
+            ref_copy = st.text_area("原始文案", height=160, key="ref_original_copy")
+            ref_engagement = st.text_input("互动数据", placeholder="例如：点赞2.1万，评论820，收藏5000", key="ref_engagement")
+            ref_note = st.text_area("用户备注", height=72, key="ref_user_note")
+
+            analyze_col, save_col = st.columns(2)
+            with analyze_col:
+                if st.button("分析素材", use_container_width=True):
+                    if not ref_title.strip() or not ref_copy.strip():
+                        st.error("素材标题和原始文案不能为空。")
+                    else:
+                        draft = build_reference_draft(
+                            ref_title,
+                            ref_platform,
+                            ref_url,
+                            ref_category,
+                            ref_content_type,
+                            ref_copy,
+                            ref_engagement,
+                            ref_note,
+                        )
+                        draft["analysis_result"] = analyze_reference_copy(draft)
+                        st.session_state.reference_draft = draft
+            with save_col:
+                if st.button("保存到素材库", use_container_width=True):
+                    draft = st.session_state.get("reference_draft")
+                    if not draft:
+                        st.error("请先点击“分析素材”。")
+                    else:
+                        saved = add_reference_material(
+                            title=draft["title"],
+                            platform=draft["platform"],
+                            source_url=draft["source_url"],
+                            category=draft["category"],
+                            content_type=draft["content_type"],
+                            original_copy=draft["original_copy"],
+                            engagement_data=draft["engagement_data"],
+                            user_note=draft["user_note"],
+                            analyze=True,
+                        )
+                        st.session_state.reference_draft = saved
+                        st.success("已保存到 references/copy_library/。")
+
+            draft = st.session_state.get("reference_draft")
+            if draft:
+                st.markdown("#### 素材分析报告")
+                render_reference_analysis(draft.get("analysis_result") or {})
+
+    with library_col:
+        with st.container(border=True):
+            card_title("素材库原创迁移")
+            library = load_copy_library()
+            if not library:
+                st.caption("素材库暂无内容。先在左侧添加并保存一条参考素材。")
+                return
+
+            label_to_id = {
+                f"{item.get('title', '未命名')} · {item.get('category', '未分类')} · {item.get('platform', '未知平台')}": item.get("id")
+                for item in library
+            }
+            selected_labels = st.multiselect("选择 1-5 条参考素材", list(label_to_id.keys()), key="selected_reference_labels")
+            selected_ids = [label_to_id[label] for label in selected_labels if label_to_id.get(label)]
+            if len(selected_ids) > 5:
+                st.warning("最多选择 5 条参考素材，系统会使用前 5 条。")
+                selected_ids = selected_ids[:5]
+
+            version_count = st.slider("原创脚本方案数量", min_value=3, max_value=5, value=3, step=1)
+            if st.button("基于参考素材生成原创脚本", use_container_width=True):
+                if not selected_ids:
+                    st.error("请至少选择 1 条参考素材。")
+                else:
+                    current_product = build_product_from_form_state()
+                    references = select_reference_materials(selected_ids)
+                    output = generate_original_scripts_from_references(current_product, references, version_count=version_count)
+                    markdown_path, json_path = write_reference_rewrite_outputs(current_product, output)
+                    st.session_state.reference_rewrite_output = output
+                    st.session_state.reference_rewrite_markdown_path = markdown_path
+                    st.session_state.reference_rewrite_json_path = json_path
+
+            output = st.session_state.get("reference_rewrite_output")
+            if output:
+                st.markdown("#### 原创迁移结果")
+                st.markdown(output.get("markdown", ""))
+                output_path = st.session_state.get("reference_rewrite_markdown_path")
+                json_path = st.session_state.get("reference_rewrite_json_path")
+                download_cols = st.columns(2)
+                with download_cols[0]:
+                    st.download_button(
+                        "下载原创迁移 Markdown",
+                        data=output.get("markdown", ""),
+                        file_name=display_filename(output_path) or "reference_rewrite.md",
+                        mime="text/markdown",
+                        use_container_width=True,
+                    )
+                with download_cols[1]:
+                    st.download_button(
+                        "下载原创迁移 JSON",
+                        data=json.dumps({key: value for key, value in output.items() if key != "markdown"}, ensure_ascii=False, indent=2),
+                        file_name=display_filename(json_path) or "reference_rewrite.json",
+                        mime="application/json",
+                        use_container_width=True,
+                    )
+
+
+def build_reference_draft(
+    title: str,
+    platform: str,
+    source_url: str,
+    category: str,
+    content_type: str,
+    original_copy: str,
+    engagement_data: str,
+    user_note: str,
+) -> Dict[str, Any]:
+    return {
+        "id": "",
+        "title": title.strip(),
+        "platform": platform.strip(),
+        "source_url": source_url.strip(),
+        "category": category.strip(),
+        "content_type": content_type.strip(),
+        "original_copy": original_copy.strip(),
+        "engagement_data": engagement_data.strip(),
+        "user_note": user_note.strip(),
+        "analysis_result": {},
+        "created_at": "",
+    }
+
+
+def render_reference_analysis(analysis: Dict[str, Any]) -> None:
+    for field in [
+        "开头钩子",
+        "用户痛点",
+        "目标人群",
+        "场景设计",
+        "人物关系",
+        "内容结构",
+        "卖点植入方式",
+        "情绪触发点",
+        "转化引导方式",
+        "可复用思路",
+        "不能照搬的表达",
+        "适合迁移的产品类型",
+    ]:
+        value = analysis.get(field, "未提取")
+        if isinstance(value, list):
+            value = "；".join(str(item) for item in value)
+        st.markdown(f"**{field}：** {value}")
+
+
+def build_product_from_form_state() -> ProductInfo:
+    mode_label = st.session_state.get(FORM_KEYS["mode_label"], "AI 视频")
+    return ProductInfo(
+        product_name=st.session_state.get(FORM_KEYS["product_name"], "未命名产品"),
+        category=st.session_state.get(FORM_KEYS["category"], ""),
+        audience=st.session_state.get(FORM_KEYS["audience"], "目标人群"),
+        selling_points=st.session_state.get(FORM_KEYS["selling_points"], "核心卖点"),
+        platform=st.session_state.get(FORM_KEYS["platform"], "抖音"),
+        duration=int(st.session_state.get(FORM_KEYS["duration"], 30)),
+        script_mode=SCRIPT_MODE_LABELS.get(mode_label, "ai_video"),
+        price_mechanism=st.session_state.get(FORM_KEYS["price_mechanism"], ""),
+        script_style=st.session_state.get(FORM_KEYS["video_style"], ""),
+        ai_tool=st.session_state.get(FORM_KEYS["ai_tool"], ""),
+        script_subtype=st.session_state.get(FORM_KEYS["script_subtype"], ""),
+        aspect_ratio=st.session_state.get(FORM_KEYS["aspect_ratio"], "9:16"),
+        video_style=st.session_state.get(FORM_KEYS["video_style"], ""),
+        character_setting=st.session_state.get(FORM_KEYS["character_setting"], ""),
+        scene_setting=st.session_state.get(FORM_KEYS["scene_setting"], ""),
+        generation_mode=GENERATION_MODE_LABELS.get(st.session_state.get(FORM_KEYS["generation_mode_label"], "本地稳定生成"), "local_only"),
+    )
 
 
 def render_basic_info(product: ProductInfo, result) -> None:

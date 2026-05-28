@@ -1,6 +1,6 @@
 # 电商短视频编导 Agent
 
-当前版本：`v0.7 稳定版`
+当前版本：`v0.8 爆款素材学习版`
 
 一个面向电商产品的短视频脚本生成 CLI + Streamlit 内部工具。项目采用“本地规则控流程 + 大模型负责生成”的混合架构：
 
@@ -18,6 +18,38 @@
 - AI 视频脚本包含画面提示词、镜头运动、人物动作、产品露出方式、字幕文案、口播文案、负面提示词。
 - 内置合规检查，标记高风险词并给出替代表达。
 - 生成 Markdown 文件到 `outputs/`，同时可保存结构化 JSON 中间结果。
+
+## v0.8 爆款素材学习版说明
+
+v0.8 在 v0.7 稳定版基础上做增量升级，不破坏当前网页、真人实拍 / AI 视频模式隔离、`local_only`、`local_plus_llm_polish` 和 Qwen 调用链路。
+
+v0.8 已支持：
+
+- 爆款素材库：用户可手动添加同类优秀产品的视频文案、小红书笔记、网页链接和同行案例。
+- 素材分析：提取开头钩子、用户痛点、目标人群、场景设计、人物关系、内容结构、卖点植入方式、情绪触发点、转化引导方式、可复用思路、不能照搬的表达和适合迁移的产品类型。
+- 素材保存：分析结果可保存到 `references/copy_library/`，并记录索引 `references/copy_library/index.json`。
+- 参考素材检索：可从素材库中选择 1-5 条参考素材。
+- 原创迁移生成：基于参考素材的结构和思路，为当前产品生成 3-5 个原创脚本方案。
+- 相似度规避：不照抄参考原文，不连续复用参考文案完整句子，并在输出中给出相似度规避说明。
+- 模式隔离延续：真人实拍原创迁移不输出 AI画面提示词；AI视频原创迁移保留 AI画面提示词和负面提示词。
+- 输出记录：原创迁移结果可导出 Markdown / JSON，metadata 记录参考素材 id 和链接，不复制参考文案全文。
+
+v0.8 新增文件：
+
+- `director_agent/copy_analyzer.py`
+- `director_agent/reference_retriever.py`
+- `director_agent/creative_rewriter.py`
+- `rules/copy_analysis_rules.json`
+- `rules/rewrite_rules.json`
+- `rules/similarity_avoidance_rules.json`
+- `references/copy_library/index.json`
+
+v0.8 测试结果：
+
+```bash
+.venv/bin/python -m pytest -q
+# 39 passed
+```
 
 ## v0.7 稳定版说明
 
