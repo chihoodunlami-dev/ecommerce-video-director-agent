@@ -44,6 +44,7 @@ GENERATION_MODE_LABELS = {
     "大模型生成 + 本地合规兜底（预留）": "llm_generate_with_local_compliance",
 }
 GENERATION_MODE_OPTIONS = ["本地生成 + 大模型润色", "本地稳定生成"]
+WORKSPACE_OPTIONS = ["脚本生成工作台", "爆款素材学习库"]
 FORM_KEYS = {
     "product_name": "form_product_name",
     "category": "form_category",
@@ -80,8 +81,42 @@ def main() -> None:
         st.session_state.json_output_path = None
         st.session_state.history = []
 
-    st.title("电商短视频编导 Agent")
+    settings = load_settings()
+    project_settings = settings.get("project", {})
+    ensure_form_defaults(
+        str(project_settings.get("default_platform", "抖音")),
+        int(project_settings.get("default_duration", 30)),
+    )
 
+    st.title("电商短视频编导 Agent")
+    workspace = render_workspace_navigation()
+
+    if workspace == "爆款素材学习库":
+        render_copy_learning_workspace()
+    else:
+        render_script_generation_workspace()
+
+
+def render_workspace_navigation() -> str:
+    st.markdown(
+        """
+        <div class="workspace-nav-title">功能导航</div>
+        <div class="workspace-nav-caption">选择当前工作区。两个工作区相互独立显示，避免信息混在同一个页面里。</div>
+        """,
+        unsafe_allow_html=True,
+    )
+    selected = st.radio(
+        "功能导航",
+        WORKSPACE_OPTIONS,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="active_workspace",
+    )
+    st.markdown(f'<div class="workspace-active-pill">当前工作区：{selected}</div>', unsafe_allow_html=True)
+    return selected
+
+
+def render_script_generation_workspace() -> None:
     input_col, output_col = st.columns([0.38, 0.62], gap="large")
 
     with input_col:
@@ -104,7 +139,8 @@ def main() -> None:
 
         render_output_panel()
 
-    st.divider()
+
+def render_copy_learning_workspace() -> None:
     render_copy_learning_area()
 
 
@@ -408,8 +444,11 @@ def render_output_panel() -> None:
 
 
 def render_copy_learning_area() -> None:
-    st.markdown("## 爆款素材学习")
+    st.markdown("## 爆款素材学习库")
     st.caption("仅支持手动添加链接和粘贴文案。Agent 只学习结构和思路，不照抄参考文案原文。")
+    st.caption(
+        f"原创迁移将使用“脚本生成工作台”中的当前产品信息：{st.session_state.get(FORM_KEYS['product_name'], '未命名产品')}。"
+    )
 
     input_col, library_col = st.columns([0.46, 0.54], gap="large")
     with input_col:
@@ -1165,6 +1204,38 @@ def inject_styles() -> None:
         .empty-output-text {
             color: #d6deea;
             line-height: 1.7;
+        }
+        .workspace-nav-title {
+            color: #f8fafc;
+            font-size: 1rem;
+            font-weight: 850;
+            margin: 0.2rem 0 0.2rem;
+        }
+        .workspace-nav-caption {
+            color: #aab6c5;
+            font-size: 0.86rem;
+            margin-bottom: 0.55rem;
+        }
+        .workspace-active-pill {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid rgba(245, 199, 107, 0.32);
+            background: rgba(245, 199, 107, 0.1);
+            color: #f5c76b;
+            border-radius: 999px;
+            padding: 0.28rem 0.72rem;
+            font-size: 0.82rem;
+            font-weight: 800;
+            margin: 0.25rem 0 1rem;
+        }
+        div[role="radiogroup"] {
+            gap: 0.7rem;
+        }
+        div[role="radiogroup"] label {
+            background: rgba(18, 25, 35, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 10px;
+            padding: 0.45rem 0.72rem;
         }
         .auth-panel {
             max-width: 460px;
