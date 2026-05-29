@@ -62,6 +62,9 @@ def generate_video_imitation_scripts(
             "category": category,
             "video_title": video_material.get("title", ""),
             "source_url": video_material.get("source_url", ""),
+            "keyframe_count": _analysis_metadata_value(video_analysis, "keyframe_count"),
+            "extraction_backend": _analysis_metadata_value(video_analysis, "extraction_backend"),
+            "evidence_level": _analysis_metadata_value(video_analysis, "evidence_level"),
             "normalized_script_subtype": normalization_metadata.get("normalized_script_subtype", product.script_subtype),
             "created_at": datetime.now().isoformat(timespec="seconds"),
         },
@@ -230,6 +233,11 @@ def _normalize_llm_video_variants(
 def _video_analysis_source(video_analysis: Mapping[str, Any]) -> str:
     metadata = video_analysis.get("metadata") if isinstance(video_analysis.get("metadata"), dict) else {}
     return str(metadata.get("analysis_source") or "unknown")
+
+
+def _analysis_metadata_value(video_analysis: Mapping[str, Any], key: str) -> Any:
+    metadata = video_analysis.get("metadata") if isinstance(video_analysis.get("metadata"), dict) else {}
+    return metadata.get(key, "")
 
 
 def render_video_imitation_markdown(product: ProductInfo, output: Mapping[str, Any]) -> str:

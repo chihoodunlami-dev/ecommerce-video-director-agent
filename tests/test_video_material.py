@@ -7,7 +7,7 @@ import director_agent.video_frame_extractor as frame_extractor
 from director_agent.video_imitation_writer import generate_video_imitation_scripts
 from director_agent.video_material_analyzer import analyze_video_material, save_video_material
 from director_agent.video_transcriber import transcribe_video
-from streamlit_app import _has_video_evidence
+from streamlit_app import _default_video_title, _has_video_evidence
 
 
 VIDEO_TRANSCRIPT = """
@@ -135,6 +135,8 @@ def test_video_material_analysis_can_use_llm_client():
     assert analysis["metadata"]["analysis_source"] == "llm"
     assert analysis["metadata"]["provider"] == "qwen"
     assert analysis["metadata"]["model"] == "qwen-plus-test"
+    assert analysis["metadata"]["keyframe_count"] == 2
+    assert analysis["metadata"]["evidence_level"] == "高"
     assert "状态钩子" in analysis["视频节奏拆解"]
 
 
@@ -160,7 +162,32 @@ def test_video_imitation_can_use_llm_client():
     assert output["metadata"]["analysis_source"] == "llm"
     assert output["metadata"]["provider"] == "qwen"
     assert output["metadata"]["model"] == "qwen-plus-test"
+    assert output["metadata"]["keyframe_count"] == 2
+    assert output["metadata"]["evidence_level"] == "高"
     assert len(output["original_scripts"]) == 3
+
+
+def test_reference_video_workspace_does_not_require_source_metadata():
+    class Upload:
+        name = "爆款参考视频.mp4"
+
+    assert _default_video_title(Upload()) == "爆款参考视频"
+
+    material = {
+        "title": _default_video_title(Upload()),
+        "platform": "",
+        "source_url": "",
+        "category": "",
+        "transcript": "",
+        "supplemental_copy": "户外真人手持纸巾产品，对话字幕：老板，这纸巾咋卖？10块钱一包。",
+        "frame_paths": [],
+        "keyframe_count": 0,
+        "frame_summaries": [],
+    }
+    analysis = analyze_video_material(material, llm_client=FakeVideoLLM())
+
+    assert analysis["metadata"]["analysis_source"] == "llm"
+    assert analysis["分析可信度"] == "中"
 
 
 def test_video_imitation_live_action_has_no_ai_prompt_fields():

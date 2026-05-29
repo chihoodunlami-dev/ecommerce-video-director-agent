@@ -33,6 +33,7 @@ def analyze_video_material(
             fallback_reason="未提取到关键帧，也未提供口播/字幕文案或画面摘要",
             frame_extraction_error=_frame_extraction_error(material),
         )
+        local_result["metadata"].update(_evidence_metadata(material))
         return local_result
     if evidence["分析可信度"] == "低":
         local_result["metadata"] = _analysis_metadata(
@@ -42,6 +43,7 @@ def analyze_video_material(
             fallback_reason="仅有标题/类目或无视觉内容摘要，已禁止生成细节化剧情分析",
             frame_extraction_error=_frame_extraction_error(material),
         )
+        local_result["metadata"].update(_evidence_metadata(material))
         return local_result
     if settings is None and llm_client is None:
         local_result["metadata"] = _analysis_metadata(
@@ -50,6 +52,7 @@ def analyze_video_material(
             model="local",
             frame_extraction_error=_frame_extraction_error(material),
         )
+        local_result["metadata"].update(_evidence_metadata(material))
         return local_result
 
     client, resolve_error = resolve_llm_client(settings=settings, llm_client=llm_client)
@@ -61,6 +64,7 @@ def analyze_video_material(
             fallback_reason=resolve_error or "LLM provider is local",
             frame_extraction_error=_frame_extraction_error(material),
         )
+        local_result["metadata"].update(_evidence_metadata(material))
         return local_result
 
     provider = getattr(client, "provider_name", "unknown")
@@ -75,6 +79,7 @@ def analyze_video_material(
             model=model,
             frame_extraction_error=_frame_extraction_error(material),
         )
+        result["metadata"].update(_evidence_metadata(material))
         return result
     except Exception as exc:
         local_result["metadata"] = _analysis_metadata(
@@ -84,6 +89,7 @@ def analyze_video_material(
             fallback_reason=str(exc),
             frame_extraction_error=_frame_extraction_error(material),
         )
+        local_result["metadata"].update(_evidence_metadata(material))
         return local_result
 
 
@@ -290,6 +296,15 @@ def _analysis_metadata(
     if frame_extraction_error:
         metadata["frame_extraction_error"] = frame_extraction_error
     return metadata
+
+
+def _evidence_metadata(material: Mapping[str, Any]) -> Dict[str, Any]:
+    evidence = _evidence_profile(material)
+    return {
+        "keyframe_count": evidence["可用证据"]["keyframe_count"],
+        "extraction_backend": evidence["可用证据"]["extraction_backend"],
+        "evidence_level": evidence["分析可信度"],
+    }
 
 
 def _evidence_text(material: Mapping[str, Any]) -> str:

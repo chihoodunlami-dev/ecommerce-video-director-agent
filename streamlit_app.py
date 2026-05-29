@@ -592,11 +592,14 @@ def render_copy_learning_area() -> None:
 
 
 def render_video_learning_area() -> None:
-    input_col, output_col = st.columns([0.46, 0.54], gap="large")
-    with input_col:
+    st.markdown("## 参考视频仿写")
+    st.caption("本功能不是复制视频，而是分析参考视频结构后，为你的产品生成原创脚本。")
+
+    upload_col, structure_col = st.columns([0.44, 0.56], gap="large")
+    with upload_col:
         with st.container(border=True):
-            card_title("上传视频素材")
-            st.info("视频分析必须基于关键帧或口播/字幕。若系统未能自动提取，请手动补充视频字幕、口播或画面摘要，否则不会生成具体分析。")
+            card_title("上传参考视频")
+            st.info("先上传参考视频，再点击“提取视频结构”。如果系统无法识别关键帧或字幕，请在高级信息里补充口播/字幕或画面摘要。")
             uploaded_video = st.file_uploader("上传视频文件", type=["mp4", "mov", "m4v", "avi"], key="video_material_upload")
             if uploaded_video:
                 st.video(uploaded_video)
@@ -610,27 +613,29 @@ def render_video_learning_area() -> None:
                 st.caption("建议视频时长 15-90 秒，文件大小 50MB 以内，支持 mp4 / mov / m4v。")
                 if file_size > 100 * 1024 * 1024:
                     st.warning("视频文件较大，可能处理很慢。建议先压缩到 50MB 以内再上传。")
-            video_title = st.text_input("视频标题", key="video_title")
-            video_platform = st.selectbox("来源平台", ["抖音", "小红书", "快手", "视频号", "淘宝", "1688", "网页", "其他"], key="video_platform")
-            video_url = st.text_input("原始链接，选填，仅记录来源", key="video_source_url")
-            video_category = st.selectbox(
-                "产品类目",
-                ["洗护个护类", "母婴纸品类", "冻品餐饮类", "1688工厂定制类", "食品零食类", "家清日用品类", "美妆护肤类", "厨房用品类", "宠物用品类", "其他"],
-                key="video_category",
-            )
-            manual_transcript = st.text_area(
-                "补充口播/字幕文案，选填",
-                height=150,
-                placeholder="如果没有自动转写服务，请粘贴视频口播稿、字幕文案或你的整理版内容。",
-                key="video_manual_transcript",
-            )
-            manual_frame_summary = st.text_area(
-                "补充画面摘要，选填",
-                height=110,
-                placeholder="例如：户外真人对话，女生手持纸巾产品，字幕出现“老板，这纸巾咋卖？”“10块钱一包”。",
-                key="video_manual_frame_summary",
-            )
-            video_note = st.text_area("素材备注，选填", height=72, key="video_note")
+
+            with st.expander("高级信息，可选", expanded=False):
+                video_title = st.text_input("视频标题", key="video_title")
+                video_platform = st.selectbox("来源平台", ["抖音", "小红书", "快手", "视频号", "淘宝", "1688", "网页", "其他"], key="video_platform")
+                video_url = st.text_input("原始链接，选填，仅记录来源", key="video_source_url")
+                video_category = st.selectbox(
+                    "参考视频类目，选填",
+                    ["未填写", "洗护个护类", "母婴纸品类", "冻品餐饮类", "1688工厂定制类", "食品零食类", "家清日用品类", "美妆护肤类", "厨房用品类", "宠物用品类", "其他"],
+                    key="video_category",
+                )
+                manual_transcript = st.text_area(
+                    "补充口播/字幕文案",
+                    height=150,
+                    placeholder="自动转写失败或字幕识别不到时，把视频口播、字幕或你整理的文字粘贴到这里。",
+                    key="video_manual_transcript",
+                )
+                manual_frame_summary = st.text_area(
+                    "补充画面摘要",
+                    height=110,
+                    placeholder="例如：户外真人对话，女生手持纸巾产品，字幕出现“老板，这纸巾咋卖？”“10块钱一包”。",
+                    key="video_manual_frame_summary",
+                )
+                video_note = st.text_area("素材备注", height=72, key="video_note")
 
             env_col, frame_col = st.columns(2)
             with env_col:
@@ -638,7 +643,7 @@ def render_video_learning_area() -> None:
                     with st.spinner("正在检测 ffmpeg / OpenCV 环境..."):
                         st.session_state.video_environment = diagnose_video_environment()
             with frame_col:
-                if st.button("提取关键帧", use_container_width=True):
+                if st.button("提取视频结构", use_container_width=True):
                     if not uploaded_video:
                         st.error("请先上传视频文件。")
                     else:
@@ -647,8 +652,27 @@ def render_video_learning_area() -> None:
                             with st.spinner("正在保存上传文件..."):
                                 video_path = save_uploaded_video_temporarily(uploaded_video)
                             with st.spinner("正在提取关键帧，最多等待 30 秒..."):
-                                st.session_state.video_frame_result = extract_keyframes(video_path)
-                            st.session_state.video_material_draft = None
+                                frame_result = extract_keyframes(video_path)
+                                st.session_state.video_frame_result = frame_result
+                            transcript_result = transcribe_video(manual_transcript=manual_transcript)
+                            if not _has_video_evidence(frame_result, transcript_result.get("transcript", ""), manual_frame_summary):
+                                st.error("当前没有足够的视频证据，请补充口播/字幕或画面摘要后再分析。")
+                                st.session_state.video_material_draft = None
+                            else:
+                                with st.spinner("正在调用大模型拆解参考视频结构..."):
+                                    material = build_video_material_draft(
+                                        title=video_title or _default_video_title(uploaded_video),
+                                        platform=video_platform,
+                                        source_url=video_url,
+                                        category="" if video_category == "未填写" else video_category,
+                                        transcript=transcript_result["transcript"],
+                                        manual_frame_summary=manual_frame_summary,
+                                        note=video_note,
+                                        frame_result=frame_result,
+                                        transcript_result=transcript_result,
+                                    )
+                                    material["analysis_result"] = analyze_video_material(material, settings=load_settings())
+                                    st.session_state.video_material_draft = material
                         finally:
                             if video_path and video_path.exists():
                                 video_path.unlink(missing_ok=True)
@@ -661,70 +685,41 @@ def render_video_learning_area() -> None:
             if frame_result:
                 render_frame_extraction_result(frame_result)
 
-            analyze_col, save_col = st.columns(2)
-            with analyze_col:
-                if st.button("分析视频素材", use_container_width=True):
-                    if not uploaded_video:
-                        st.error("请先上传视频文件。")
-                    elif not video_title.strip():
-                        st.error("视频标题不能为空。")
-                    else:
-                        frame_result = st.session_state.get("video_frame_result") or _empty_frame_result()
-                        transcript_result = transcribe_video(manual_transcript=manual_transcript)
-                        if not _has_video_evidence(frame_result, transcript_result.get("transcript", ""), manual_frame_summary):
-                            st.error("当前没有视频证据，请先提取关键帧，或补充口播/字幕/画面摘要。")
-                        else:
-                            with st.spinner("正在调用大模型分析视频素材..."):
-                                material = build_video_material_draft(
-                                    title=video_title,
-                                    platform=video_platform,
-                                    source_url=video_url,
-                                    category=video_category,
-                                    transcript=transcript_result["transcript"],
-                                    manual_frame_summary=manual_frame_summary,
-                                    note=video_note,
-                                    frame_result=frame_result,
-                                    transcript_result=transcript_result,
-                                )
-                                material["analysis_result"] = analyze_video_material(material, settings=load_settings())
-                                st.session_state.video_material_draft = material
-            with save_col:
-                if st.button("保存到视频素材库", use_container_width=True):
-                    draft = st.session_state.get("video_material_draft")
-                    if not draft:
-                        st.error("请先点击“分析视频素材”。")
-                    else:
-                        saved = save_video_material(draft)
-                        st.session_state.video_material_draft = saved
-                        st.success("已保存到 references/video_library/。")
-
+    with structure_col:
+        with st.container(border=True):
+            card_title("参考视频结构拆解")
             draft = st.session_state.get("video_material_draft")
             if draft:
-                st.markdown("#### 视频素材分析报告")
                 render_video_analysis(draft.get("analysis_result") or {})
+            else:
+                st.caption("点击左侧“提取视频结构”后，这里会展示开头钩子、节奏结构、冲突点、产品出现时机、转化引导和证据来源。")
+
+    product_col, output_col = st.columns([0.38, 0.62], gap="large")
+    with product_col:
+        with st.container(border=True):
+            card_title("我的产品信息")
+            current_product = build_product_from_form_state()
+            st.caption("优先读取“脚本生成工作台”里的当前产品信息。这里的类目是我的产品类目，不是参考视频类目。")
+            render_reference_product_summary(current_product)
 
     with output_col:
         with st.container(border=True):
-            card_title("视频原创仿写生成")
-            video_library = load_video_library()
-            if video_library:
-                st.caption(f"视频素材库已有 {len(video_library)} 条记录。当前按钮默认基于左侧刚分析的视频生成。")
-            else:
-                st.caption("视频素材库暂无保存记录。你仍可基于左侧刚分析的视频直接生成原创脚本。")
+            card_title("生成原创仿写脚本")
             version_count = st.selectbox("原创脚本方案数量", [3, 5, 8], key="video_imitation_version_count")
-            if st.button("基于该视频生成原创脚本", use_container_width=True):
+            if st.button("根据该视频结构生成我的原创脚本", use_container_width=True):
                 draft = st.session_state.get("video_material_draft")
                 if not draft:
-                    st.error("请先分析一条视频素材。")
+                    st.error("请先上传参考视频并点击“提取视频结构”。")
                 else:
-                    current_product = build_product_from_form_state()
-                    output = generate_video_imitation_scripts(
-                        current_product,
-                        draft.get("analysis_result") or {},
-                        draft,
-                        version_count=int(version_count),
-                        settings=load_settings(),
-                    )
+                    with st.spinner("正在调用大模型生成原创仿写脚本..."):
+                        current_product = build_product_from_form_state()
+                        output = generate_video_imitation_scripts(
+                            current_product,
+                            draft.get("analysis_result") or {},
+                            draft,
+                            version_count=int(version_count),
+                            settings=load_settings(),
+                        )
                     markdown_path, json_path = write_video_imitation_outputs(current_product, output)
                     st.session_state.video_imitation_output = output
                     st.session_state.video_imitation_markdown_path = markdown_path
@@ -792,6 +787,26 @@ def build_video_material_draft(
         "analysis_result": {},
         "created_at": "",
     }
+
+
+def _default_video_title(uploaded_video: Any) -> str:
+    name = getattr(uploaded_video, "name", "") or "参考视频"
+    return Path(name).stem or "参考视频"
+
+
+def render_reference_product_summary(product: ProductInfo) -> None:
+    rows = {
+        "我的产品名称": product.product_name,
+        "我的产品类目": product.category or "自动识别",
+        "目标人群": product.audience,
+        "核心卖点": product.selling_points,
+        "价格机制": product.price_mechanism or "未填写",
+        "平台": product.platform,
+        "脚本模式": product.script_mode,
+        "脚本子类型": product.script_subtype or "未填写",
+    }
+    for key, value in rows.items():
+        st.markdown(f"**{key}：** {value}")
 
 
 def render_frame_extraction_result(frame_result: Dict[str, Any]) -> None:
