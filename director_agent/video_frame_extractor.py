@@ -18,28 +18,37 @@ TEMP_DIR = PROJECT_ROOT / "temp"
 def extract_keyframes(
     video_path: Path,
     output_dir: Optional[Path] = None,
-    interval_seconds: int = 3,
+    interval_seconds: int = 2,
     max_frames: int = 12,
 ) -> Dict[str, Any]:
-    """Extract key frames without making extraction mandatory for the flow."""
+    """Extract key frames and report clear evidence/error metadata."""
 
     output_dir = output_dir or FRAME_DIR / uuid.uuid4().hex[:10]
     output_dir.mkdir(parents=True, exist_ok=True)
-    interval_seconds = max(1, int(interval_seconds or 3))
+    interval_seconds = max(1, int(interval_seconds or 2))
     max_frames = max(1, int(max_frames or 12))
 
     if not video_path or not Path(video_path).exists():
         return _empty_result("video file does not exist")
 
-    cv2_result = _extract_with_cv2(Path(video_path), output_dir, interval_seconds, max_frames)
-    if cv2_result["frame_paths"]:
-        return cv2_result
-
     ffmpeg_result = _extract_with_ffmpeg(Path(video_path), output_dir, interval_seconds, max_frames)
     if ffmpeg_result["frame_paths"]:
         return ffmpeg_result
 
-    return _empty_result("no frame extraction backend available")
+    cv2_result = _extract_with_cv2(Path(video_path), output_dir, interval_seconds, max_frames)
+    if cv2_result["frame_paths"]:
+        cv2_result["note"] = f"ffmpeg failed, used opencv fallback. ffmpeg_error={ffmpeg_result.get('frame_extraction_error') or ffmpeg_result.get('note', '')}"
+        return cv2_result
+
+    error = "; ".join(
+        item
+        for item in [
+            ffmpeg_result.get("frame_extraction_error") or ffmpeg_result.get("note", ""),
+            cv2_result.get("frame_extraction_error") or cv2_result.get("note", ""),
+        ]
+        if item
+    )
+    return _empty_result(error or "no frame extraction backend available")
 
 
 def save_uploaded_video_temporarily(uploaded_file: Any, suffix: str = ".mp4") -> Path:
@@ -89,14 +98,16 @@ def _extract_with_cv2(video_path: Path, output_dir: Path, interval_seconds: int,
     capture.release()
     return {
         "frame_paths": frame_paths,
+        "keyframe_count": len(frame_paths),
         "frame_summaries": summarize_frames(frame_paths),
         "backend": "opencv",
         "note": "" if frame_paths else "opencv extracted no frames",
+        "frame_extraction_error": "" if frame_paths else "opencv extracted no frames",
     }
 
 
 def _extract_with_ffmpeg(video_path: Path, output_dir: Path, interval_seconds: int, max_frames: int) -> Dict[str, Any]:
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = _ffmpeg_path()
     if not ffmpeg:
         return _empty_result("ffmpeg unavailable")
 
@@ -120,11 +131,32 @@ def _extract_with_ffmpeg(video_path: Path, output_dir: Path, interval_seconds: i
     frame_paths = [str(path) for path in sorted(output_dir.glob("frame_*.jpg"))[:max_frames]]
     return {
         "frame_paths": frame_paths,
+        "keyframe_count": len(frame_paths),
         "frame_summaries": summarize_frames(frame_paths),
         "backend": "ffmpeg",
         "note": "" if frame_paths else "ffmpeg extracted no frames",
+        "frame_extraction_error": "" if frame_paths else "ffmpeg extracted no frames",
     }
 
 
 def _empty_result(note: str) -> Dict[str, Any]:
-    return {"frame_paths": [], "frame_summaries": [], "backend": "none", "note": note}
+    return {
+        "frame_paths": [],
+        "keyframe_count": 0,
+        "frame_summaries": [],
+        "backend": "none",
+        "note": note,
+        "frame_extraction_error": note,
+    }
+
+
+def _ffmpeg_path() -> Optional[str]:
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        return ffmpeg
+    try:
+        import imageio_ffmpeg  # type: ignore
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None

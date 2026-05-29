@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from director_agent.models import ProductInfo
+from director_agent.video_frame_extractor import extract_keyframes
 from director_agent.video_imitation_writer import generate_video_imitation_scripts
 from director_agent.video_material_analyzer import analyze_video_material, save_video_material
 from director_agent.video_transcriber import transcribe_video
@@ -62,6 +63,15 @@ class FakeVideoLLM:
             "不能照搬的表达": ["先别急着买这瓶洗发水"],
             "适合迁移到哪些产品": ["洗发水", "护发产品"],
         }
+
+
+class HallucinatingVideoLLM(FakeVideoLLM):
+    def generate(self, messages, schema):
+        payload = super().generate(messages, schema)
+        if "original_scripts" not in schema.get("required", []):
+            payload["场景设计"] = ["婴儿护理台", "宝妈给宝宝擦脸"]
+            payload["人物关系"] = "宝妈与宝宝"
+        return payload
 
 
 def video_material():
@@ -190,3 +200,114 @@ def test_large_video_paths_are_gitignored():
     assert "references/video_library/frames/*" in ignore
     assert "temp/" in ignore
     assert "tmp/" in ignore
+
+
+def test_video_analysis_without_evidence_does_not_hallucinate_category_details():
+    material = {
+        "title": "户外纸巾对话视频",
+        "platform": "抖音",
+        "category": "母婴纸品类",
+        "transcript": "",
+        "frame_paths": [],
+        "keyframe_count": 0,
+        "frame_summaries": [],
+        "frame_extraction_error": "ffmpeg failed",
+    }
+
+    analysis = analyze_video_material(material, llm_client=FakeVideoLLM())
+    text = str(analysis)
+
+    assert analysis["分析可信度"] == "不可分析"
+    assert analysis["metadata"]["analysis_source"] == "not_analyzable"
+    assert "当前无法分析视频内容" in analysis["视频节奏拆解"]
+    for hallucinated in ["婴儿", "宝妈", "宝宝", "擦脸", "护理台"]:
+        assert hallucinated not in text
+
+
+def test_video_analysis_uses_supplemental_copy_as_evidence():
+    material = {
+        "title": "纸巾价格对话",
+        "platform": "抖音",
+        "category": "母婴纸品类",
+        "transcript": "",
+        "supplemental_copy": "户外真人手持纸巾产品，对话字幕：老板，这纸巾咋卖？10块钱一包。嫌贵你别买啊。那你学一个看看。",
+        "frame_paths": [],
+        "keyframe_count": 0,
+        "frame_summaries": [],
+    }
+
+    analysis = analyze_video_material(material)
+    text = str(analysis)
+
+    assert analysis["分析可信度"] == "中"
+    assert "老板与顾客" in analysis["人物关系"]
+    assert "价格" in analysis["用户痛点"]
+    assert "户外" in text
+    assert "宝妈" not in text
+    assert "宝宝" not in text
+
+
+def test_video_analysis_uses_frame_summary_as_evidence():
+    material = {
+        "title": "纸巾产品户外展示",
+        "platform": "抖音",
+        "category": "母婴纸品类",
+        "transcript": "",
+        "frame_paths": ["frame_01.jpg"],
+        "keyframe_count": 1,
+        "frame_summaries": ["关键帧1：户外真人手持纸巾产品，画面有价格对话字幕。"],
+    }
+
+    analysis = analyze_video_material(material)
+    text = str(analysis)
+
+    assert analysis["分析可信度"] == "中"
+    assert "关键帧1：户外真人手持纸巾产品" in text
+    assert "户外" in text
+
+
+def test_video_analysis_records_frame_extraction_error_in_metadata():
+    material = {
+        "title": "纸巾价格对话",
+        "platform": "抖音",
+        "category": "母婴纸品类",
+        "transcript": "老板，这纸巾咋卖？10块钱一包。嫌贵你别买啊。那你学一个看看。",
+        "frame_paths": [],
+        "keyframe_count": 0,
+        "frame_summaries": [],
+        "frame_extraction_error": "ffmpeg failed: unsupported codec",
+    }
+
+    analysis = analyze_video_material(material)
+
+    assert analysis["metadata"]["frame_extraction_error"] == "ffmpeg failed: unsupported codec"
+    assert analysis["人物关系"] == "老板与顾客/路人"
+
+
+def test_video_analysis_rejects_llm_details_not_supported_by_evidence():
+    material = {
+        "title": "纸巾价格对话",
+        "platform": "抖音",
+        "category": "母婴纸品类",
+        "transcript": "",
+        "supplemental_copy": "户外真人手持纸巾产品，对话字幕：老板，这纸巾咋卖？10块钱一包。嫌贵你别买啊。那你学一个看看。",
+        "frame_paths": [],
+        "keyframe_count": 0,
+        "frame_summaries": [],
+    }
+
+    analysis = analyze_video_material(material, llm_client=HallucinatingVideoLLM())
+    text = str(analysis)
+
+    assert analysis["metadata"]["analysis_source"] == "local_fallback"
+    assert "unsupported details" in analysis["metadata"]["fallback_reason"]
+    assert "婴儿护理台" not in text
+    assert "宝妈与宝宝" not in text
+
+
+def test_extract_keyframes_failure_reports_error(tmp_path):
+    result = extract_keyframes(tmp_path / "missing.mp4", output_dir=tmp_path / "frames")
+
+    assert result["keyframe_count"] == 0
+    assert result["frame_paths"] == []
+    assert result["frame_extraction_error"]

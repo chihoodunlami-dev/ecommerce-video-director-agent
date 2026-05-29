@@ -596,6 +596,7 @@ def render_video_learning_area() -> None:
     with input_col:
         with st.container(border=True):
             card_title("上传视频素材")
+            st.info("视频分析必须基于关键帧或口播/字幕。若系统未能自动提取，请手动补充视频字幕、口播或画面摘要，否则不会生成具体分析。")
             uploaded_video = st.file_uploader("上传视频文件", type=["mp4", "mov", "m4v", "avi"], key="video_material_upload")
             if uploaded_video:
                 st.video(uploaded_video)
@@ -613,6 +614,12 @@ def render_video_learning_area() -> None:
                 placeholder="如果没有自动转写服务，请粘贴视频口播稿、字幕文案或你的整理版内容。",
                 key="video_manual_transcript",
             )
+            manual_frame_summary = st.text_area(
+                "补充画面摘要，选填",
+                height=110,
+                placeholder="例如：户外真人对话，女生手持纸巾产品，字幕出现“老板，这纸巾咋卖？”“10块钱一包”。",
+                key="video_manual_frame_summary",
+            )
             video_note = st.text_area("素材备注，选填", height=72, key="video_note")
 
             analyze_col, save_col = st.columns(2)
@@ -627,15 +634,20 @@ def render_video_learning_area() -> None:
                         try:
                             video_path = save_uploaded_video_temporarily(uploaded_video)
                             frame_result = extract_keyframes(video_path)
+                            if frame_result.get("keyframe_count", 0) <= 0:
+                                st.warning(f"关键帧提取失败：{frame_result.get('frame_extraction_error') or frame_result.get('note', '未知错误')}")
+                            else:
+                                st.success(f"已抽取 {frame_result.get('keyframe_count')} 个关键帧。")
                             transcript_result = transcribe_video(video_path, manual_transcript)
                             if not transcript_result["transcript"]:
-                                st.warning("当前环境没有可用自动转写结果，请补充口播或字幕文案以提升分析准确度。")
+                                st.warning("当前环境没有可用自动转写结果，请补充口播、字幕文案或画面摘要，否则不会生成具体分析。")
                             material = build_video_material_draft(
                                 title=video_title,
                                 platform=video_platform,
                                 source_url=video_url,
                                 category=video_category,
                                 transcript=transcript_result["transcript"],
+                                manual_frame_summary=manual_frame_summary,
                                 note=video_note,
                                 frame_result=frame_result,
                                 transcript_result=transcript_result,
@@ -718,10 +730,14 @@ def build_video_material_draft(
     source_url: str,
     category: str,
     transcript: str,
+    manual_frame_summary: str,
     note: str,
     frame_result: Dict[str, Any],
     transcript_result: Dict[str, Any],
 ) -> Dict[str, Any]:
+    frame_summaries = list(frame_result.get("frame_summaries", []))
+    if manual_frame_summary.strip():
+        frame_summaries.append(f"用户补充画面摘要：{manual_frame_summary.strip()}")
     return {
         "id": "",
         "title": title.strip(),
@@ -729,12 +745,16 @@ def build_video_material_draft(
         "source_url": source_url.strip(),
         "category": category.strip(),
         "transcript": transcript.strip(),
+        "supplemental_copy": manual_frame_summary.strip(),
+        "manual_frame_summary": manual_frame_summary.strip(),
         "transcript_source": transcript_result.get("source", "none"),
         "transcription_note": transcript_result.get("note", ""),
         "frame_paths": frame_result.get("frame_paths", []),
-        "frame_summaries": frame_result.get("frame_summaries", []),
+        "keyframe_count": frame_result.get("keyframe_count", len(frame_result.get("frame_paths", []))),
+        "frame_summaries": frame_summaries,
         "frame_extraction_backend": frame_result.get("backend", "none"),
         "frame_extraction_note": frame_result.get("note", ""),
+        "frame_extraction_error": frame_result.get("frame_extraction_error", ""),
         "note": note.strip(),
         "analysis_result": {},
         "created_at": "",
@@ -744,7 +764,10 @@ def build_video_material_draft(
 def render_video_analysis(analysis: Dict[str, Any]) -> None:
     for field in [
         "视频基础信息",
+        "可用证据",
+        "分析可信度",
         "口播/字幕转写",
+        "关键帧摘要",
         "开头3秒钩子",
         "视频节奏拆解",
         "场景设计",
