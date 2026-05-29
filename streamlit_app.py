@@ -47,7 +47,6 @@ GENERATION_MODE_LABELS = {
     "本地生成 + 大模型润色": "local_plus_llm_polish",
 }
 GENERATION_MODE_OPTIONS = ["大模型多版本生成", "本地生成 + 大模型润色"]
-WORKSPACE_OPTIONS = ["脚本生成工作台", "爆款素材学习库"]
 FORM_KEYS = {
     "product_name": "form_product_name",
     "category": "form_category",
@@ -92,31 +91,8 @@ def main() -> None:
     )
 
     st.title("电商短视频编导 Agent")
-    workspace = render_workspace_navigation()
-
-    if workspace == "爆款素材学习库":
-        render_copy_learning_workspace()
-    else:
-        render_script_generation_workspace()
-
-
-def render_workspace_navigation() -> str:
-    st.markdown(
-        """
-        <div class="workspace-nav-title">功能导航</div>
-        <div class="workspace-nav-caption">选择当前工作区。两个工作区相互独立显示，避免信息混在同一个页面里。</div>
-        """,
-        unsafe_allow_html=True,
-    )
-    selected = st.radio(
-        "功能导航",
-        WORKSPACE_OPTIONS,
-        horizontal=True,
-        label_visibility="collapsed",
-        key="active_workspace",
-    )
-    st.markdown(f'<div class="workspace-active-pill">当前工作区：{selected}</div>', unsafe_allow_html=True)
-    return selected
+    st.caption("简洁版脚本生成工作台：输入产品信息，生成真人实拍或 AI 视频脚本。")
+    render_script_generation_workspace()
 
 
 def render_script_generation_workspace() -> None:
@@ -141,10 +117,6 @@ def render_script_generation_workspace() -> None:
                 add_history_record(product.normalized(), result, markdown, markdown_path)
 
         render_output_panel()
-
-
-def render_copy_learning_workspace() -> None:
-    render_copy_learning_area()
 
 
 def require_app_access() -> None:
