@@ -29,7 +29,7 @@ from director_agent.script_modes import (
     LIVE_ACTION_STYLES,
     LIVE_ACTION_SUBTYPES,
 )
-from director_agent.video_frame_extractor import extract_keyframes, save_uploaded_video_temporarily
+from director_agent.video_frame_extractor import diagnose_video_environment, extract_keyframes, save_uploaded_video_temporarily
 from director_agent.video_imitation_writer import generate_video_imitation_scripts, write_video_imitation_outputs
 from director_agent.video_material_analyzer import analyze_video_material, load_video_library, save_video_material
 from director_agent.video_transcriber import transcribe_video
@@ -600,6 +600,16 @@ def render_video_learning_area() -> None:
             uploaded_video = st.file_uploader("上传视频文件", type=["mp4", "mov", "m4v", "avi"], key="video_material_upload")
             if uploaded_video:
                 st.video(uploaded_video)
+                file_size = _uploaded_file_size(uploaded_video)
+                st.markdown(
+                    f"**上传状态：** 已选择文件  \n"
+                    f"**文件名：** {uploaded_video.name}  \n"
+                    f"**文件大小：** {_format_bytes(file_size)}  \n"
+                    f"**文件类型：** {uploaded_video.type or Path(uploaded_video.name).suffix or '未知'}"
+                )
+                st.caption("建议视频时长 15-90 秒，文件大小 50MB 以内，支持 mp4 / mov / m4v。")
+                if file_size > 100 * 1024 * 1024:
+                    st.warning("视频文件较大，可能处理很慢。建议先压缩到 50MB 以内再上传。")
             video_title = st.text_input("视频标题", key="video_title")
             video_platform = st.selectbox("来源平台", ["抖音", "小红书", "快手", "视频号", "淘宝", "1688", "网页", "其他"], key="video_platform")
             video_url = st.text_input("原始链接，选填，仅记录来源", key="video_source_url")
@@ -622,6 +632,35 @@ def render_video_learning_area() -> None:
             )
             video_note = st.text_area("素材备注，选填", height=72, key="video_note")
 
+            env_col, frame_col = st.columns(2)
+            with env_col:
+                if st.button("检测视频环境", use_container_width=True):
+                    with st.spinner("正在检测 ffmpeg / OpenCV 环境..."):
+                        st.session_state.video_environment = diagnose_video_environment()
+            with frame_col:
+                if st.button("提取关键帧", use_container_width=True):
+                    if not uploaded_video:
+                        st.error("请先上传视频文件。")
+                    else:
+                        video_path = None
+                        try:
+                            with st.spinner("正在保存上传文件..."):
+                                video_path = save_uploaded_video_temporarily(uploaded_video)
+                            with st.spinner("正在提取关键帧，最多等待 30 秒..."):
+                                st.session_state.video_frame_result = extract_keyframes(video_path)
+                            st.session_state.video_material_draft = None
+                        finally:
+                            if video_path and video_path.exists():
+                                video_path.unlink(missing_ok=True)
+
+            if st.session_state.get("video_environment"):
+                st.markdown("#### 视频环境检测")
+                st.json(st.session_state.video_environment)
+
+            frame_result = st.session_state.get("video_frame_result")
+            if frame_result:
+                render_frame_extraction_result(frame_result)
+
             analyze_col, save_col = st.columns(2)
             with analyze_col:
                 if st.button("分析视频素材", use_container_width=True):
@@ -630,40 +669,25 @@ def render_video_learning_area() -> None:
                     elif not video_title.strip():
                         st.error("视频标题不能为空。")
                     else:
-                        video_path = None
-                        try:
-                            video_path = save_uploaded_video_temporarily(uploaded_video)
-                            frame_result = extract_keyframes(video_path)
-                            if frame_result.get("keyframe_count", 0) <= 0:
-                                st.warning(
-                                    "关键帧提取失败："
-                                    f"{frame_result.get('frame_extraction_error') or frame_result.get('note', '未知错误')}。"
-                                    "请确认运行环境已安装 ffmpeg，或补充口播/字幕/画面摘要。"
+                        frame_result = st.session_state.get("video_frame_result") or _empty_frame_result()
+                        transcript_result = transcribe_video(manual_transcript=manual_transcript)
+                        if not _has_video_evidence(frame_result, transcript_result.get("transcript", ""), manual_frame_summary):
+                            st.error("当前没有视频证据，请先提取关键帧，或补充口播/字幕/画面摘要。")
+                        else:
+                            with st.spinner("正在调用大模型分析视频素材..."):
+                                material = build_video_material_draft(
+                                    title=video_title,
+                                    platform=video_platform,
+                                    source_url=video_url,
+                                    category=video_category,
+                                    transcript=transcript_result["transcript"],
+                                    manual_frame_summary=manual_frame_summary,
+                                    note=video_note,
+                                    frame_result=frame_result,
+                                    transcript_result=transcript_result,
                                 )
-                            else:
-                                st.success(
-                                    f"已抽取 {frame_result.get('keyframe_count')} 个关键帧，"
-                                    f"后端：{frame_result.get('extraction_backend') or frame_result.get('backend', 'unknown')}。"
-                                )
-                            transcript_result = transcribe_video(video_path, manual_transcript)
-                            if not transcript_result["transcript"]:
-                                st.warning("当前环境没有可用自动转写结果，请补充口播、字幕文案或画面摘要，否则不会生成具体分析。")
-                            material = build_video_material_draft(
-                                title=video_title,
-                                platform=video_platform,
-                                source_url=video_url,
-                                category=video_category,
-                                transcript=transcript_result["transcript"],
-                                manual_frame_summary=manual_frame_summary,
-                                note=video_note,
-                                frame_result=frame_result,
-                                transcript_result=transcript_result,
-                            )
-                            material["analysis_result"] = analyze_video_material(material, settings=load_settings())
-                            st.session_state.video_material_draft = material
-                        finally:
-                            if video_path and video_path.exists():
-                                video_path.unlink(missing_ok=True)
+                                material["analysis_result"] = analyze_video_material(material, settings=load_settings())
+                                st.session_state.video_material_draft = material
             with save_col:
                 if st.button("保存到视频素材库", use_container_width=True):
                     draft = st.session_state.get("video_material_draft")
@@ -768,6 +792,59 @@ def build_video_material_draft(
         "analysis_result": {},
         "created_at": "",
     }
+
+
+def render_frame_extraction_result(frame_result: Dict[str, Any]) -> None:
+    if frame_result.get("keyframe_count", 0) > 0:
+        st.success(
+            f"关键帧提取完成：{frame_result.get('keyframe_count')} 帧，"
+            f"后端：{frame_result.get('extraction_backend') or frame_result.get('backend', 'unknown')}"
+        )
+        st.markdown(f"**时间点：** {format_display_value(frame_result.get('frame_timestamps', []))}")
+        with st.expander("查看关键帧文件信息", expanded=False):
+            st.markdown(f"**frame_paths：** {format_display_value(frame_result.get('frame_paths', []))}")
+            st.markdown(f"**attempted_backends：** {format_display_value(frame_result.get('attempted_backends', []))}")
+    else:
+        st.warning("关键帧提取失败，请补充口播/字幕/画面摘要后再分析。")
+        st.markdown(f"**attempted_backends：** {format_display_value(frame_result.get('attempted_backends', []))}")
+        st.markdown(f"**frame_extraction_error：** {frame_result.get('frame_extraction_error') or frame_result.get('note', '未知错误')}")
+
+
+def _empty_frame_result() -> Dict[str, Any]:
+    return {
+        "frame_paths": [],
+        "keyframe_count": 0,
+        "frame_timestamps": [],
+        "frame_summaries": [],
+        "extraction_backend": "none",
+        "attempted_backends": [],
+        "frame_extraction_error": "",
+    }
+
+
+def _has_video_evidence(frame_result: Dict[str, Any], transcript: str, manual_frame_summary: str) -> bool:
+    return bool(
+        int(frame_result.get("keyframe_count") or 0) > 0
+        or (transcript or "").strip()
+        or (manual_frame_summary or "").strip()
+    )
+
+
+def _uploaded_file_size(uploaded_file: Any) -> int:
+    if hasattr(uploaded_file, "size"):
+        return int(uploaded_file.size or 0)
+    if hasattr(uploaded_file, "getvalue"):
+        return len(uploaded_file.getvalue())
+    return 0
+
+
+def _format_bytes(size: int) -> str:
+    size = int(size or 0)
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} B"
 
 
 def render_video_analysis(analysis: Dict[str, Any]) -> None:

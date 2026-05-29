@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 from director_agent.models import ProductInfo
 from director_agent.video_frame_extractor import extract_keyframes
@@ -6,6 +7,7 @@ import director_agent.video_frame_extractor as frame_extractor
 from director_agent.video_imitation_writer import generate_video_imitation_scripts
 from director_agent.video_material_analyzer import analyze_video_material, save_video_material
 from director_agent.video_transcriber import transcribe_video
+from streamlit_app import _has_video_evidence
 
 
 VIDEO_TRANSCRIPT = """
@@ -73,6 +75,11 @@ class HallucinatingVideoLLM(FakeVideoLLM):
             payload["场景设计"] = ["婴儿护理台", "宝妈给宝宝擦脸"]
             payload["人物关系"] = "宝妈与宝宝"
         return payload
+
+
+class FailingIfCalledVideoLLM(FakeVideoLLM):
+    def generate(self, messages, schema):
+        raise AssertionError("LLM should not be called without video evidence")
 
 
 def video_material():
@@ -215,7 +222,7 @@ def test_video_analysis_without_evidence_does_not_hallucinate_category_details()
         "frame_extraction_error": "ffmpeg failed",
     }
 
-    analysis = analyze_video_material(material, llm_client=FakeVideoLLM())
+    analysis = analyze_video_material(material, llm_client=FailingIfCalledVideoLLM())
     text = str(analysis)
 
     assert analysis["分析可信度"] == "不可分析"
@@ -223,6 +230,13 @@ def test_video_analysis_without_evidence_does_not_hallucinate_category_details()
     assert "当前无法分析视频内容" in analysis["视频节奏拆解"]
     for hallucinated in ["婴儿", "宝妈", "宝宝", "擦脸", "护理台"]:
         assert hallucinated not in text
+
+
+def test_video_upload_flow_requires_explicit_evidence_before_analysis():
+    assert not _has_video_evidence({"keyframe_count": 0}, "", "")
+    assert _has_video_evidence({"keyframe_count": 1}, "", "")
+    assert _has_video_evidence({"keyframe_count": 0}, "老板，这纸巾咋卖？", "")
+    assert _has_video_evidence({"keyframe_count": 0}, "", "户外真人手持纸巾产品")
 
 
 def test_video_analysis_uses_supplemental_copy_as_evidence():
@@ -334,6 +348,33 @@ def test_extract_keyframes_reports_imageio_ffmpeg_backend_when_available(tmp_pat
     assert result["extraction_backend"] == "imageio_ffmpeg"
     assert result["attempted_backends"] == ["imageio_ffmpeg"]
     assert result["frame_timestamps"] == [0, 2]
+
+
+def test_extract_keyframes_ffmpeg_timeout_returns_error(tmp_path, monkeypatch):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"fake video")
+
+    def timeout_run(command, check, stdout, stderr, timeout):
+        raise subprocess.TimeoutExpired(command, timeout)
+
+    monkeypatch.setattr(frame_extractor, "_imageio_ffmpeg_path", lambda: "/fake/imageio/ffmpeg")
+    monkeypatch.setattr(frame_extractor.shutil, "which", lambda name: None)
+    monkeypatch.setattr(frame_extractor.subprocess, "run", timeout_run)
+
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "cv2":
+            raise ModuleNotFoundError("cv2 unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    result = extract_keyframes(video_path, output_dir=tmp_path / "frames", timeout_seconds=5)
+
+    assert result["keyframe_count"] == 0
+    assert "ffmpeg timeout" in result["frame_extraction_error"]
+    assert result["attempted_backends"] == ["imageio_ffmpeg", "system_ffmpeg", "opencv"]
 
 
 def test_extract_keyframes_returns_clear_error_when_all_backends_unavailable(tmp_path, monkeypatch):

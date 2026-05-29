@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -18,15 +19,17 @@ TEMP_DIR = PROJECT_ROOT / "temp"
 def extract_keyframes(
     video_path: Path,
     output_dir: Optional[Path] = None,
-    interval_seconds: int = 2,
-    max_frames: int = 12,
+    interval_seconds: int = 3,
+    max_frames: int = 8,
+    timeout_seconds: int = 30,
 ) -> Dict[str, Any]:
     """Extract key frames and report clear evidence/error metadata."""
 
     output_dir = output_dir or FRAME_DIR / uuid.uuid4().hex[:10]
     output_dir.mkdir(parents=True, exist_ok=True)
-    interval_seconds = max(1, int(interval_seconds or 2))
-    max_frames = max(1, int(max_frames or 12))
+    interval_seconds = max(1, int(interval_seconds or 3))
+    max_frames = max(1, min(8, int(max_frames or 8)))
+    timeout_seconds = max(5, int(timeout_seconds or 30))
 
     if not video_path or not Path(video_path).exists():
         return _empty_result("video file does not exist")
@@ -44,6 +47,7 @@ def extract_keyframes(
             output_dir,
             interval_seconds,
             max_frames,
+            timeout_seconds,
         )
         if imageio_result["frame_paths"]:
             return imageio_result
@@ -62,6 +66,7 @@ def extract_keyframes(
             output_dir,
             interval_seconds,
             max_frames,
+            timeout_seconds,
         )
         if system_result["frame_paths"]:
             return system_result
@@ -110,21 +115,21 @@ def _extract_with_cv2(video_path: Path, output_dir: Path, interval_seconds: int,
     if not capture.isOpened():
         return _empty_result("opencv cannot open video")
 
-    fps = capture.get(cv2.CAP_PROP_FPS) or 25
-    frame_interval = max(1, int(fps * interval_seconds))
     frame_paths: List[str] = []
-    frame_index = 0
-    saved_index = 0
-    while len(frame_paths) < max_frames:
+    fps = capture.get(cv2.CAP_PROP_FPS) or 25
+    frame_count = capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+    duration_seconds = frame_count / fps if fps and frame_count else max_frames * interval_seconds
+    for saved_index in range(1, max_frames + 1):
+        timestamp = (saved_index - 1) * interval_seconds
+        if frame_paths and duration_seconds and timestamp > duration_seconds:
+            break
+        capture.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
         success, frame = capture.read()
         if not success:
             break
-        if frame_index % frame_interval == 0:
-            saved_index += 1
-            frame_path = output_dir / f"frame_{saved_index:02d}.jpg"
-            cv2.imwrite(str(frame_path), frame)
-            frame_paths.append(str(frame_path))
-        frame_index += 1
+        frame_path = output_dir / f"frame_{saved_index:03d}.jpg"
+        cv2.imwrite(str(frame_path), frame)
+        frame_paths.append(str(frame_path))
     capture.release()
     return {
         "frame_paths": frame_paths,
@@ -146,8 +151,9 @@ def _extract_with_ffmpeg_exe(
     output_dir: Path,
     interval_seconds: int,
     max_frames: int,
+    timeout_seconds: int,
 ) -> Dict[str, Any]:
-    pattern = output_dir / "frame_%02d.jpg"
+    pattern = output_dir / "frame_%03d.jpg"
     command = [
         ffmpeg,
         "-y",
@@ -155,13 +161,15 @@ def _extract_with_ffmpeg_exe(
         "-i",
         str(video_path),
         "-vf",
-        f"fps=1/{interval_seconds}",
-        "-vframes",
+        f"fps=1/{interval_seconds},scale=480:-1",
+        "-frames:v",
         str(max_frames),
         str(pattern),
     ]
     try:
-        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        return _empty_result("ffmpeg timeout", [backend])
     except Exception as exc:
         return _empty_result(f"{backend} failed: {exc}", [backend])
 
@@ -204,3 +212,27 @@ def _imageio_ffmpeg_path() -> Optional[str]:
 
 def _timestamps_for_count(count: int, interval_seconds: int) -> List[float]:
     return [round(index * interval_seconds, 2) for index in range(count)]
+
+
+def diagnose_video_environment() -> Dict[str, Any]:
+    imageio_path = _imageio_ffmpeg_path()
+    system_path = shutil.which("ffmpeg")
+    try:
+        import cv2  # type: ignore
+
+        opencv_available = True
+        opencv_version = getattr(cv2, "__version__", "")
+    except Exception as exc:
+        opencv_available = False
+        opencv_version = f"unavailable: {exc}"
+
+    return {
+        "imageio_ffmpeg_available": bool(imageio_path),
+        "imageio_ffmpeg_path": imageio_path or "",
+        "system_ffmpeg_available": bool(system_path),
+        "system_ffmpeg_path": system_path or "",
+        "opencv_available": opencv_available,
+        "opencv_version": opencv_version,
+        "python": sys.version.split()[0],
+        "backend_priority": ["imageio_ffmpeg", "system_ffmpeg", "opencv"],
+    }
