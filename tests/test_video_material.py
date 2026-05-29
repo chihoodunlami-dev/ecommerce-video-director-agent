@@ -2,6 +2,7 @@ from pathlib import Path
 
 from director_agent.models import ProductInfo
 from director_agent.video_frame_extractor import extract_keyframes
+import director_agent.video_frame_extractor as frame_extractor
 from director_agent.video_imitation_writer import generate_video_imitation_scripts
 from director_agent.video_material_analyzer import analyze_video_material, save_video_material
 from director_agent.video_transcriber import transcribe_video
@@ -311,3 +312,51 @@ def test_extract_keyframes_failure_reports_error(tmp_path):
     assert result["keyframe_count"] == 0
     assert result["frame_paths"] == []
     assert result["frame_extraction_error"]
+
+
+def test_extract_keyframes_reports_imageio_ffmpeg_backend_when_available(tmp_path, monkeypatch):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"fake video")
+
+    def fake_run(command, check, stdout, stderr, timeout):
+        output_pattern = Path(command[-1])
+        output_pattern.parent.mkdir(parents=True, exist_ok=True)
+        for index in range(1, 3):
+            (output_pattern.parent / f"frame_{index:02d}.jpg").write_bytes(b"jpg")
+
+    monkeypatch.setattr(frame_extractor, "_imageio_ffmpeg_path", lambda: "/fake/imageio/ffmpeg")
+    monkeypatch.setattr(frame_extractor.shutil, "which", lambda name: "/fake/system/ffmpeg")
+    monkeypatch.setattr(frame_extractor.subprocess, "run", fake_run)
+
+    result = extract_keyframes(video_path, output_dir=tmp_path / "frames", interval_seconds=2, max_frames=8)
+
+    assert result["keyframe_count"] == 2
+    assert result["extraction_backend"] == "imageio_ffmpeg"
+    assert result["attempted_backends"] == ["imageio_ffmpeg"]
+    assert result["frame_timestamps"] == [0, 2]
+
+
+def test_extract_keyframes_returns_clear_error_when_all_backends_unavailable(tmp_path, monkeypatch):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"fake video")
+
+    monkeypatch.setattr(frame_extractor, "_imageio_ffmpeg_path", lambda: None)
+    monkeypatch.setattr(frame_extractor.shutil, "which", lambda name: None)
+
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "cv2":
+            raise ModuleNotFoundError("cv2 unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    result = extract_keyframes(video_path, output_dir=tmp_path / "frames")
+
+    assert result["keyframe_count"] == 0
+    assert result["extraction_backend"] == "none"
+    assert result["attempted_backends"] == ["imageio_ffmpeg", "system_ffmpeg", "opencv"]
+    assert "imageio_ffmpeg unavailable" in result["frame_extraction_error"]
+    assert "system_ffmpeg unavailable" in result["frame_extraction_error"]
+    assert "opencv unavailable" in result["frame_extraction_error"]

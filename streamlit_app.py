@@ -635,9 +635,16 @@ def render_video_learning_area() -> None:
                             video_path = save_uploaded_video_temporarily(uploaded_video)
                             frame_result = extract_keyframes(video_path)
                             if frame_result.get("keyframe_count", 0) <= 0:
-                                st.warning(f"关键帧提取失败：{frame_result.get('frame_extraction_error') or frame_result.get('note', '未知错误')}")
+                                st.warning(
+                                    "关键帧提取失败："
+                                    f"{frame_result.get('frame_extraction_error') or frame_result.get('note', '未知错误')}。"
+                                    "请确认运行环境已安装 ffmpeg，或补充口播/字幕/画面摘要。"
+                                )
                             else:
-                                st.success(f"已抽取 {frame_result.get('keyframe_count')} 个关键帧。")
+                                st.success(
+                                    f"已抽取 {frame_result.get('keyframe_count')} 个关键帧，"
+                                    f"后端：{frame_result.get('extraction_backend') or frame_result.get('backend', 'unknown')}。"
+                                )
                             transcript_result = transcribe_video(video_path, manual_transcript)
                             if not transcript_result["transcript"]:
                                 st.warning("当前环境没有可用自动转写结果，请补充口播、字幕文案或画面摘要，否则不会生成具体分析。")
@@ -751,8 +758,10 @@ def build_video_material_draft(
         "transcription_note": transcript_result.get("note", ""),
         "frame_paths": frame_result.get("frame_paths", []),
         "keyframe_count": frame_result.get("keyframe_count", len(frame_result.get("frame_paths", []))),
+        "frame_timestamps": frame_result.get("frame_timestamps", []),
         "frame_summaries": frame_summaries,
-        "frame_extraction_backend": frame_result.get("backend", "none"),
+        "frame_extraction_backend": frame_result.get("extraction_backend") or frame_result.get("backend", "none"),
+        "attempted_backends": frame_result.get("attempted_backends", []),
         "frame_extraction_note": frame_result.get("note", ""),
         "frame_extraction_error": frame_result.get("frame_extraction_error", ""),
         "note": note.strip(),

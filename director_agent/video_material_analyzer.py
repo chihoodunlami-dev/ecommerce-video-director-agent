@@ -324,6 +324,9 @@ def _evidence_profile(material: Mapping[str, Any]) -> Dict[str, Any]:
             "supplemental_copy_exists": has_supplemental,
             "frame_summary_exists": has_frame_summary,
             "frame_paths": frame_paths[:12],
+            "frame_timestamps": list(material.get("frame_timestamps") or [])[:12],
+            "extraction_backend": material.get("frame_extraction_backend") or material.get("extraction_backend") or "",
+            "attempted_backends": list(material.get("attempted_backends") or []),
         },
         "分析可信度": confidence,
     }
@@ -340,7 +343,11 @@ def _has_visual_frame_summary(frame_summaries: List[Any]) -> bool:
 def _frame_extraction_error(material: Mapping[str, Any]) -> str:
     if int(material.get("keyframe_count") or len(material.get("frame_paths") or []) or 0) > 0:
         return ""
-    return str(material.get("frame_extraction_error") or material.get("frame_extraction_note") or "")
+    attempted = list(material.get("attempted_backends") or [])
+    error = str(material.get("frame_extraction_error") or material.get("frame_extraction_note") or "")
+    if attempted and error:
+        return f"{error}; attempted_backends={', '.join(str(item) for item in attempted)}"
+    return error
 
 
 def load_video_library() -> List[Dict[str, Any]]:
